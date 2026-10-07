@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PowerPDF: a pixel-vibe terminal UI for exploring files and merging, splitting, and printing PDFs."""
+"""PowerPDF: a pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact and compare PDFs."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
 RECENT_MAX = 30
 BAD_NAME_CHARS = set('\\/:*?"<>|')
@@ -252,7 +252,7 @@ class Splash(Screen):
             with Center():
                 yield Static(logo(), id="logo")
             with Center():
-                yield Static(f"[$foreground-muted]explore · merge · split · print     v{VERSION}[/]")
+                yield Static(f"[$foreground-muted]explore · preview · merge · split · print · compress · card · pages · redact · compare     v{VERSION}[/]")
             with Center():
                 yield Static("[$foreground-muted]press any key[/]", id="skip")
 
@@ -1477,7 +1477,7 @@ class PowerPDF(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="powerpdf", description="Explore folders and merge, split, and print PDFs.")
+    parser = argparse.ArgumentParser(prog="powerpdf", description="Explore, preview, merge, split, print, compress, card, pages, redact and compare PDFs.")
     parser.add_argument("folder", nargs="?", default=".", help="folder to open (default: current folder)")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     args = parser.parse_args()
