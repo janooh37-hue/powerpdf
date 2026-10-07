@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import cv2
@@ -14,6 +15,7 @@ OUT_DPI = 150  # saved cards: small files, text still readable
 JPEG = {"quality": 80, "optimize": True}
 
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
+Box = tuple[float, float, float, float]  # black box on a crop: center x, y, width, height in crop pixels at DPI
 
 
 def render_pages(paths: list[Path], limit: int = 2) -> list[np.ndarray]:
@@ -62,13 +64,28 @@ def find_cards(img: np.ndarray, n: int) -> list[Rect]:
     return sorted(rects, key=lambda r: (round(r[0][1] / 50), r[0][0]))
 
 
-def cut(img: np.ndarray, rect: Rect) -> Image.Image:
-    """The rect's contents, rotated upright."""
+def cut_matrix(rect: Rect) -> np.ndarray:
+    """The 2x3 affine that maps page pixels to the straightened crop of rect."""
     (cx, cy), (w, h), angle = rect
     m = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
     m[:, 2] += (w / 2 - cx, h / 2 - cy)
+    return m
+
+
+def cut(img: np.ndarray, rect: Rect) -> Image.Image:
+    """The rect's contents, rotated upright."""
+    (_, _), (w, h), _ = rect
     size = (max(1, round(w)), max(1, round(h)))
-    return Image.fromarray(cv2.warpAffine(img, m, size, flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255)))
+    return Image.fromarray(cv2.warpAffine(img, cut_matrix(rect), size, flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255)))
+
+
+def carry(boxes: list[Box], old: Rect, new: Rect) -> list[Box]:
+    """The boxes over the same spot of the page after the crop changes from old to new."""
+    if not boxes:
+        return boxes
+    centers = np.array([[(cx, cy) for cx, cy, _, _ in boxes]], np.float32)
+    page = cv2.transform(centers, cv2.invertAffineTransform(cut_matrix(old)))
+    return [(float(x), float(y), w, h) for (x, y), (_, _, w, h) in zip(cv2.transform(page, cut_matrix(new))[0], boxes)]
 
 
 def pair_cards(pages: list[np.ndarray]) -> list[tuple[np.ndarray, Rect]]:
@@ -78,21 +95,34 @@ def pair_cards(pages: list[np.ndarray]) -> list[tuple[np.ndarray, Rect]]:
     return [(pages[0], rect) for rect in find_cards(pages[0], 2)]
 
 
-def downscale(card: Image.Image) -> Image.Image:
-    """The card at OUT_DPI: small files, text still readable."""
-    return card.resize((max(1, round(card.width * OUT_DPI / DPI)), max(1, round(card.height * OUT_DPI / DPI))), Image.LANCZOS)
+def downscale(card: Image.Image, boxes: list[Box]) -> Image.Image:
+    """The card at OUT_DPI: small files, text still readable, the boxes painted pure black.
+    Painted after the downscale and grown outward to 8-px JPEG blocks: a block that is all black decodes to exactly (0, 0, 0) with no ringing."""
+    out = card.resize((max(1, round(card.width * OUT_DPI / DPI)), max(1, round(card.height * OUT_DPI / DPI))), Image.LANCZOS)
+    k = OUT_DPI / DPI / 8
+    for cx, cy, w, h in boxes:
+        x0, x1 = (min(max(n * 8, 0), out.width) for n in (math.floor((cx - w / 2) * k), math.ceil((cx + w / 2) * k)))
+        y0, y1 = (min(max(n * 8, 0), out.height) for n in (math.floor((cy - h / 2) * k), math.ceil((cy + h / 2) * k)))
+        if x0 < x1 and y0 < y1:
+            out.paste((0, 0, 0), (x0, y0, x1, y1))
+    return out
 
 
-def save_cards(cards: list[Image.Image], output: Path) -> None:
+def jpeg_options(boxes: list[list[Box]]) -> dict:
+    """JPEG, but with boxes full chroma resolution: 4:2:0 upsampling bleeds the neighbours' color into the box edge (not pure black)."""
+    return JPEG | {"subsampling": 0} if any(boxes) else JPEG
+
+
+def save_cards(cards: list[Image.Image], output: Path, boxes: list[list[Box]]) -> None:
     """One page per card, page = card, at OUT_DPI (small, still readable); no metadata beyond the Producer."""
     from pdf_compress import strip_metadata
 
-    pages = [downscale(card) for card in cards]
-    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, **JPEG)
+    pages = [downscale(card, card_boxes) for card, card_boxes in zip(cards, boxes)]
+    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, **jpeg_options(boxes))
     strip_metadata(output)
 
 
-def save_jpgs(cards: list[Image.Image], outputs: list[Path]) -> None:
+def save_jpgs(cards: list[Image.Image], outputs: list[Path], boxes: list[list[Box]]) -> None:
     """One JPEG per card at OUT_DPI; no EXIF (Pillow writes none unless asked)."""
-    for card, output in zip(cards, outputs):
-        downscale(card).save(output, "JPEG", dpi=(OUT_DPI, OUT_DPI), **JPEG)
+    for card, output, card_boxes in zip(cards, outputs, boxes):
+        downscale(card, card_boxes).save(output, "JPEG", dpi=(OUT_DPI, OUT_DPI), **jpeg_options([card_boxes]))

@@ -1,6 +1,7 @@
 """End-to-end tests: drive the real app with Textual's pilot against real PDFs on disk."""
 
 import asyncio
+import math
 import os
 import shutil
 from pathlib import Path
@@ -443,6 +444,50 @@ def test_card_saves_front_and_back_jpgs(tmp_path):
                 assert img.format == "JPEG" and abs(img.width - 506) < 3 and abs(img.height - 319) < 3
                 assert round(img.info["dpi"][0]) == 150 and not img.getexif() and "comment" not in img.info
                 assert abs(np.asarray(img.convert("RGB"))[160, 253].astype(int) - color).max() < 12
+
+    run(tmp_path, scenario)
+
+
+@pytest.mark.parametrize("key", ["enter", "j"])
+def test_card_black_boxes_are_pure_black_in_the_saved_images(tmp_path, key):
+    make_scan(tmp_path / "scan.pdf")
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "scan.pdf")
+        await pilot.press("k")
+        await settle(app, pilot)
+        screen = app.screen
+        rect = screen.rects[0]
+        await pilot.press("b")  # a box on the front, selected
+        (x, y, w, h), = screen.boxes[0]
+        assert screen.active == 0 and abs(x - rect[1][0] / 2) < 1 and abs(y - rect[1][1] / 2) < 1
+        await pilot.press("right", "right", "down")  # the box moves; the crop stays
+        assert screen.boxes[0] == [(x + 20, y + 10, w, h)] and screen.rects[0] == rect
+        await pilot.press("backspace")
+        assert screen.boxes[0] == [] and screen.active is None
+        await pilot.press("b", "shift+right")  # a new box, wider
+        (x, y, w2, h2), = screen.boxes[0]
+        assert (w2, h2) == (w + 10, h)
+        await pilot.press("space", "right")  # none selected: the crop moves, the box stays over the same spot of the card
+        assert screen.active is None and screen.boxes[0][0][0] == pytest.approx(x - 10, abs=1)
+        await pilot.press("tab", "b", "left", "tab", "tab", "b")  # the back: two boxes; the second still selected at save
+        boxes = [list(side) for side in screen.boxes]
+        assert [len(side) for side in boxes] == [1, 2] and screen.active == 1
+
+        await pilot.press(key)
+        if key == "enter":
+            await submit(app, pilot)
+            reader = PdfReader(tmp_path / "scan_card.pdf")
+            assert all(len(page.images) == 1 for page in reader.pages)
+            images = [page.images[0].image for page in reader.pages]
+        else:
+            images = [Image.open(tmp_path / f"scan_{side}.jpg") for side in ("front", "back")]
+        for img, side, color in zip(images, boxes, (FRONT, BACK)):
+            pixels = np.asarray(img.convert("RGB"))
+            for cx, cy, w, h in side:  # the box at 150 dpi, shrunk to whole pixels
+                x0, x1, y0, y1 = math.ceil((cx - w / 2) / 2), int((cx + w / 2) / 2), math.ceil((cy - h / 2) / 2), int((cy + h / 2) / 2)
+                assert x1 - x0 > 100 and (pixels[y0:y1, x0:x1] == 0).all()
+            assert abs(pixels[160, 5].astype(int) - color).max() < 12  # the rest of the card is untouched
 
     run(tmp_path, scenario)
 

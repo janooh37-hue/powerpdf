@@ -379,12 +379,16 @@ class ChoiceDialog(ModalScreen[str | None]):
 
 
 class CardScreen(ModalScreen):
-    """Front and back cut out of scans: nudge each crop, then save both as a card-sized 2-page PDF or two JPGs."""
+    """Front and back cut out of scans: nudge each crop, black out private details, then save both as a card-sized 2-page PDF or two JPGs.
+    Arrows, shift+arrows move/resize the selected black box, or the crop when none is selected; b adds a box (selected), space steps crop → box → … → crop."""
 
     BINDINGS = [
         Binding("enter", "save", "Save PDF"),
         Binding("j", "save_jpg", "Save JPG"),
         Binding("tab", "switch", "Front/Back"),
+        Binding("b", "add_box", "Black box"),
+        Binding("space", "cycle", "Crop/Box"),
+        Binding("backspace", "remove_box", "Remove box"),
         Binding("left_square_bracket", "change(0, 0, 0, 0, 0.5)", "Tilt", key_display="[ ]"),
         Binding("right_square_bracket", "change(0, 0, 0, 0, -0.5)", "Tilt", show=False),
         Binding("r", "change(0, 0, 0, 0, 180)", "Rotate 180°"),
@@ -405,6 +409,8 @@ class CardScreen(ModalScreen):
         self.pages = [page for page, _ in cards]
         self.rects = [rect for _, rect in cards]
         self.side = 0
+        self.boxes: list[list] = [[], []]  # per side: black boxes (pdf_card.Box), in crop pixels
+        self.active: int | None = None  # selected box of the current side; None = the crop
 
     def compose(self) -> ComposeResult:
         image = HalfcellImage if self.app.pixel_mode else SharpImage
@@ -421,20 +427,54 @@ class CardScreen(ModalScreen):
         self.action_switch(0)
 
     def show(self, i: int) -> None:
+        from PIL import ImageDraw
         from pdf_card import DPI, cut
         (_, _), (w, h), angle = self.rects[i]
-        self.query_one(f"#cut{i}").image = cut(self.pages[i], self.rects[i])
+        image = cut(self.pages[i], self.rects[i])
+        draw = ImageDraw.Draw(image)
+        for n, (cx, cy, bw, bh) in enumerate(self.boxes[i]):  # the selected box gets a red outline (preview only)
+            selected = i == self.side and n == self.active
+            draw.rectangle((cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2), fill=(0, 0, 0), outline=(255, 0, 0) if selected else None, width=3)
+        self.query_one(f"#cut{i}").image = image
         mm = lambda px: px / DPI * 25.4
-        self.query_one(f"#side{i}").border_subtitle = f"{mm(w):.1f} × {mm(h):.1f} mm · angle {angle:+.1f}°"
+        box = f" · box {self.active + 1}/{len(self.boxes[i])}" if i == self.side and self.active is not None else ""
+        self.query_one(f"#side{i}").border_subtitle = f"{mm(w):.1f} × {mm(h):.1f} mm · angle {angle:+.1f}°{box}"
 
     def action_switch(self, side: int | None = None) -> None:
+        if self.active is not None:  # drop the selection outline
+            self.active = None
+            self.show(self.side)
         self.side = 1 - self.side if side is None else side
         for i in range(2):
             self.query_one(f"#side{i}").set_class(i == self.side, "-active")
 
+    def action_add_box(self) -> None:
+        (_, _), (w, h), _ = self.rects[self.side]
+        self.boxes[self.side].append((w / 2, h / 2, w * 0.4, h * 0.1))  # a band across the middle
+        self.active = len(self.boxes[self.side]) - 1
+        self.show(self.side)
+
+    def action_cycle(self) -> None:
+        step = 0 if self.active is None else self.active + 1
+        self.active = step if step < len(self.boxes[self.side]) else None
+        self.show(self.side)
+
+    def action_remove_box(self) -> None:
+        if self.active is not None:
+            del self.boxes[self.side][self.active]
+            self.active = None
+            self.show(self.side)
+
     def action_change(self, dx: float, dy: float, dw: float = 0, dh: float = 0, da: float = 0) -> None:
-        (cx, cy), (w, h), angle = self.rects[self.side]
-        self.rects[self.side] = ((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da)
+        from pdf_card import carry
+        boxes = self.boxes[self.side]
+        if self.active is not None and not da:  # tilt and rotate always act on the crop
+            cx, cy, w, h = boxes[self.active]
+            boxes[self.active] = (cx + dx, cy + dy, max(8, w + dw), max(8, h + dh))
+        else:
+            (cx, cy), (w, h), angle = old = self.rects[self.side]
+            self.rects[self.side] = new = ((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da)
+            self.boxes[self.side] = carry(boxes, old, new)  # boxes stay over the same spot of the card
         self.show(self.side)
 
     def action_save(self) -> None:
@@ -459,7 +499,7 @@ class CardScreen(ModalScreen):
         from pdf_card import cut, save_cards, save_jpgs
         try:
             cards = [cut(page, rect) for page, rect in zip(self.pages, self.rects)]
-            save_cards(cards, *outputs) if len(outputs) == 1 else save_jpgs(cards, list(outputs))
+            save_cards(cards, outputs[0], self.boxes) if len(outputs) == 1 else save_jpgs(cards, list(outputs), self.boxes)
         except OSError as error:
             self.notify(f"Can't save: {error}", severity="error")
             return
