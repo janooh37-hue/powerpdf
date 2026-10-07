@@ -265,6 +265,59 @@ def test_compare_original_and_small(tmp_path):
     run(tmp_path, scenario)
 
 
+def test_pages_grid_deletes_rotates_reorders_saves_and_extracts(tmp_path):
+    writer = PdfWriter()
+    for size in (100, 200, 300):  # the size tells the pages apart
+        writer.add_blank_page(size, size)
+    writer.write(tmp_path / "a.pdf")
+    (tmp_path / "sub").mkdir()
+    original = (tmp_path / "a.pdf").read_bytes()
+
+    def pages(name: str) -> list[tuple[int, int]]:
+        return [(int(p.mediabox.width), p.rotation) for p in PdfReader(tmp_path / name).pages]
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "sub")
+        await pilot.press("t")
+        assert not isinstance(app.screen, powerpdf.PagesScreen)  # not a PDF: toast only
+
+        await highlight(app, pilot, "a.pdf")
+        await pilot.press("t")
+        await settle(app, pilot)
+        screen = app.screen
+        assert isinstance(screen, powerpdf.PagesScreen) and screen.order == [0, 1, 2] and len(screen.thumbs) == 3
+        assert screen.cols == 140 // powerpdf.CELL_W
+        await pilot.press("right", "delete", "left", "r")  # drop page 2, turn page 1
+        assert screen.order == [0, 2] and screen.turns == {0: 1} and screen.cursor == 0
+        assert screen.cells[0].query_one(".thumb").image.size == screen.thumbs[0].rotate(-90, expand=True).size
+        assert "↻90°" in screen.caption(0) and "↻" not in screen.caption(2)
+        await pilot.press("enter")
+        await submit(app, pilot)
+        assert not isinstance(app.screen, powerpdf.PagesScreen) and app.recent[0] == tmp_path / "a_edited.pdf"
+        assert pages("a_edited.pdf") == [(100, 90), (300, 0)]
+
+        await highlight(app, pilot, "a.pdf")
+        await pilot.press("t")  # picks beat the cursor; shift+arrows move them; x extracts them
+        await settle(app, pilot)
+        screen = app.screen
+        await pilot.press("space", "right", "right", "space", "x")
+        await submit(app, pilot)
+        assert isinstance(app.screen, powerpdf.PagesScreen)  # extracting keeps the grid open
+        assert pages("a_extract.pdf") == [(100, 0), (300, 0)]
+        await pilot.press("shift+right", "shift+right")  # page 1 passes page 2 once; page 3 is at the edge, so the block stays put
+        assert screen.order == [1, 0, 2]
+
+        await pilot.press("escape")  # unsaved changes: ask first
+        assert isinstance(app.screen, powerpdf.ConfirmDialog)
+        await pilot.press("n")
+        assert app.screen is screen
+        await pilot.press("escape", "y")
+        assert not isinstance(app.screen, powerpdf.PagesScreen)
+        assert (tmp_path / "a.pdf").read_bytes() == original
+
+    run(tmp_path, scenario)
+
+
 def test_rename_and_delete_keep_queue_and_recent_in_step(tmp_path, monkeypatch):
     make_pdf(tmp_path / "a.pdf")
     make_pdf(tmp_path / "b.pdf")

@@ -14,6 +14,7 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+from types import SimpleNamespace
 
 import pypdfium2 as pdfium
 from rich.text import Text
@@ -26,7 +27,8 @@ from textual_image._terminal import get_cell_size
 from textual import events, on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import Center, Horizontal, Middle, Vertical
+from textual.containers import Center, Grid, Horizontal, Middle, Vertical
+from textual.geometry import Size
 from textual.markup import escape
 from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
@@ -41,6 +43,7 @@ SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpd
 RECENT_MAX = 30
 BAD_NAME_CHARS = set('\\/:*?"<>|')
 PDFIUM_LOCK = threading.Lock()  # pdfium is not thread-safe
+CELL_W, CELL_H = 24, 14  # one page cell of the Pages grid, in terminal cells
 
 THEMES = [
     Theme(
@@ -526,6 +529,212 @@ class CompareScreen(ModalScreen):
             self.query_one(f"#side{i}").border_subtitle = f"{human_size(self.sizes[i])} · page {page + 1}/{count}"
 
 
+class PagesScreen(ModalScreen):
+    """Thumbnails of every page: pick, rotate, delete and reorder them, then save the result or extract the picks.
+    Every key acts on the picked pages, or on the cursor page when none are picked."""
+
+    BINDINGS = [
+        Binding("left", "cursor(-1)", "Move", key_display="←↑↓→"),
+        Binding("right", "cursor(1)", "Move", show=False),
+        Binding("up", "cursor(-1, True)", "Move", show=False),
+        Binding("down", "cursor(1, True)", "Move", show=False),
+        Binding("space", "pick", "Select"),
+        Binding("r", "rotate", "Rotate 90°"),
+        Binding("delete", "drop", "Delete"),
+        Binding("shift+left", "reorder(-1)", "Reorder", key_display="shift+←→"),
+        Binding("shift+right", "reorder(1)", "Reorder", show=False),
+        Binding("x", "extract", "Extract"),
+        Binding("enter", "save", "Save"),
+        Binding("escape", "close", "Close"),
+    ]
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self.path = path
+        self.order: list[int] = []  # original page numbers (from 0), in working order
+        self.turns: dict[int, int] = {}  # original page -> quarter turns clockwise
+        self.picked: set[int] = set()
+        self.cells: dict[int, Vertical] = {}
+        self.thumbs: dict[int, object] = {}  # original page -> unrotated PIL image
+        self.cursor = 0  # index into order
+        self.cols = 1
+        self.edited = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="status")
+        yield Grid(id="grid")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.load()
+
+    def on_resize(self) -> None:
+        self.cols = max(1, self.size.width // CELL_W)
+        self.query_one("#grid").styles.grid_size_columns = self.cols
+
+    @work(thread=True)
+    def load(self) -> None:
+        """Render the thumbnails one page at a time, so the grid stays usable and PDFIUM_LOCK is free in between.
+        The PDF is opened from bytes and closed again; closing the screen cancels this worker."""
+        worker, app, pdf = get_current_worker(), self.app, None
+        box = SimpleNamespace(content_size=Size(CELL_W - 2, CELL_H - 3))  # what render_cached reads from a panel
+        try:
+            data, mtime = self.path.read_bytes(), self.path.stat().st_mtime_ns
+            with PDFIUM_LOCK:
+                pdf = pdfium.PdfDocument(data)
+                count = len(pdf)
+            app.call_from_thread(self.build, count)
+            for page in range(count):
+                if worker.is_cancelled:
+                    return
+                with PDFIUM_LOCK:
+                    image = app.render_cached(pdf, self.path, mtime, page, box)
+                app.call_from_thread(self.show_thumb, page, image)
+        except (pdfium.PdfiumError, OSError) as error:
+            app.call_from_thread(self.notify, f"Can't show pages: {error}", severity="error")
+            if not self.cells:
+                app.call_from_thread(self.dismiss)
+        finally:
+            if pdf:
+                with PDFIUM_LOCK:
+                    pdf.close()
+
+    def build(self, count: int) -> None:
+        self.order = list(range(count))
+        for page in self.order:  # halfcell: sixel images don't survive scrolling and clipping in a grid
+            self.cells[page] = Vertical(
+                Center(HalfcellImage(classes="thumb"), classes="frame"), Label(self.caption(page), classes="num"),
+                classes="cell -cursor" if page == 0 else "cell",
+            )
+        self.query_one("#grid").mount(*self.cells.values())
+        self.status()
+
+    def caption(self, page: int) -> str:
+        turns = self.turns.get(page, 0)
+        return f"{'✓ ' if page in self.picked else ''}{page + 1}{f' ↻{90 * turns}°' if turns else ''}"
+
+    def show_thumb(self, page: int, image=None) -> None:
+        """Show a page's thumbnail, turned by its rotation (image is new from the worker, else the stored one)."""
+        if image:
+            self.thumbs[page] = image
+        if page in self.cells and page in self.thumbs:
+            self.cells[page].query_one(".thumb").image = self.thumbs[page].rotate(-90 * self.turns.get(page, 0), expand=True)
+
+    def paint(self, *pages: int) -> None:
+        for page in pages:
+            cell = self.cells[page]
+            cell.query_one(".num", Label).update(self.caption(page))
+            cell.set_class(page in self.picked, "-picked")
+            cell.set_class(page == self.order[self.cursor], "-cursor")
+
+    def status(self) -> None:
+        self.query_one("#status", Static).update(
+            f"[b $accent]{escape(self.path.name)}[/]  [$foreground-muted]{len(self.order)} pages · "
+            f"{len(self.picked)} selected{' · [$warning]unsaved[/]' if self.edited else ''}[/]"
+        )
+
+    def targets(self) -> list[int]:
+        """Picked pages in working order, else the cursor page."""
+        picked = [page for page in self.order if page in self.picked]
+        return picked or self.order[self.cursor:self.cursor + 1]
+
+    def action_cursor(self, step: int, rows: bool = False) -> None:
+        if not self.order:
+            return
+        old = self.order[self.cursor]
+        self.cursor = max(0, min(len(self.order) - 1, self.cursor + step * (self.cols if rows else 1)))
+        self.paint(old, self.order[self.cursor])
+        self.cells[self.order[self.cursor]].scroll_visible()
+
+    def action_pick(self) -> None:
+        if self.order:
+            page = self.order[self.cursor]
+            self.picked ^= {page}
+            self.paint(page)
+            self.status()
+
+    def action_rotate(self) -> None:
+        for page in self.targets():
+            self.turns[page] = (self.turns.get(page, 0) + 1) % 4
+            self.show_thumb(page)
+            self.paint(page)
+            self.edited = True
+        self.status()
+
+    def action_drop(self) -> None:
+        if not (gone := self.targets()):
+            return
+        here = self.order[self.cursor]
+        self.order = [page for page in self.order if page not in gone]
+        for page in gone:
+            self.picked.discard(page)
+            self.cells.pop(page).remove()
+        self.cursor = self.order.index(here) if here in self.order else max(0, min(self.cursor, len(self.order) - 1))
+        self.edited = True
+        if self.order:
+            self.paint(self.order[self.cursor])
+        self.status()
+
+    def action_reorder(self, step: int) -> None:
+        """Move the targets one place, a block against the edge staying put."""
+        targets, order, here = set(self.targets()), self.order, self.order[self.cursor:self.cursor + 1]
+        for i in range(len(order)) if step < 0 else reversed(range(len(order))):
+            j = i + step
+            if order[i] in targets and 0 <= j < len(order) and order[j] not in targets:
+                order[i], order[j] = order[j], order[i]
+                moved, passed = self.cells[order[j]], self.cells[order[i]]
+                self.query_one("#grid").move_child(moved, before=passed) if step < 0 else self.query_one("#grid").move_child(moved, after=passed)
+                self.edited = True
+        if here:
+            self.cursor = order.index(here[0])
+            self.call_after_refresh(self.cells[here[0]].scroll_visible)
+        self.status()
+
+    def action_save(self) -> None:
+        if not self.order:
+            self.notify("No pages left to save.", severity="warning")
+            return
+        default = self.path.with_name(f"{self.path.stem}_edited.pdf")
+        self.app.push_screen(
+            PromptDialog("Save pages as", str(default), *output_checks([self.path])),
+            lambda value: value and self.write(Path(value).expanduser().resolve(), list(self.order), close=True),
+        )
+
+    def action_extract(self) -> None:
+        if not (pages := self.targets()):
+            self.notify("No pages left to extract.", severity="warning")
+            return
+        default = self.path.with_name(f"{self.path.stem}_extract.pdf")
+        self.app.push_screen(
+            PromptDialog(f"Extract {len(pages)} page{'s' * (len(pages) > 1)} to", str(default), *output_checks([self.path])),
+            lambda value: value and self.write(Path(value).expanduser().resolve(), pages),
+        )
+
+    def write(self, output: Path, pages: list[int], close: bool = False) -> None:
+        """Write original pages (numbers from 0) in the given order, each turned by its rotation on top of its own."""
+        from pypdf import PdfReader, PdfWriter
+        try:
+            reader, writer = PdfReader(self.path), PdfWriter()
+            for page in pages:
+                writer.add_page(reader.pages[page]).rotate(90 * self.turns.get(page, 0))
+            writer.write(output)
+        except Exception as error:  # any pypdf/IO failure is shown, not a crash
+            self.notify(f"Can't save: {error}", severity="error")
+            return
+        self.app.saved_pages(output, len(pages))
+        if close:
+            self.dismiss()
+
+    def action_close(self) -> None:
+        if self.edited:
+            self.app.push_screen(
+                ConfirmDialog(f"Discard your changes to [b]{escape(self.path.name)}[/]?"),
+                lambda ok: ok and self.dismiss(),
+            )
+        else:
+            self.dismiss()
+
+
 class PowerPDF(App):
     TITLE = "PowerPDF"
     CSS = """
@@ -568,6 +777,15 @@ class PowerPDF(App):
     CompareScreen #saved { height: 1; padding: 0 1; background: $panel; }
     CompareScreen .compare { width: 1fr; align: center middle; }
     CompareScreen .shot { width: auto; height: 1fr; }
+    PagesScreen { background: $background; }
+    PagesScreen #status { height: 1; padding: 0 1; background: $panel; }
+    PagesScreen #grid { grid-rows: 14; height: 1fr; overflow-y: auto; }
+    PagesScreen .cell { height: 14; border: round $panel-lighten-2; background: $surface; }
+    PagesScreen .cell.-picked { border: round $accent; background: $accent 25%; }
+    PagesScreen .cell.-cursor { border: heavy $primary; }
+    PagesScreen .frame { height: 1fr; }
+    PagesScreen .thumb { width: auto; height: 1fr; }
+    PagesScreen .num { width: 100%; text-align: center; }
     CardScreen .card { width: 1fr; align: center middle; }
     CardScreen .card.-active { border: round $primary; border-title-color: $primary; border-title-style: bold; }
     CardScreen .cut { width: 1fr; height: auto; }
@@ -588,6 +806,7 @@ class PowerPDF(App):
         Binding("k", "card", "Card"),
         Binding("c", "compress", "Compress"),
         Binding("d", "compare", "Compare"),
+        Binding("t", "pages", "Pages"),
         Binding("r", "toggle_recent", "Recent"),
         Binding("question_mark", "show_help_panel", "Keys", key_display="?"),
         Binding("q", "quit", "Quit"),
@@ -688,6 +907,7 @@ class PowerPDF(App):
             ("Print", "Print queued (or highlighted) PDFs", self.action_print),
             ("Card front + back", "Cut a scanned card's front and back into a small card-sized PDF", self.action_card),
             ("Compare", "Show the highlighted PDF and its _small copy side by side", self.action_compare),
+            ("Pages", "Thumbnail grid of the highlighted PDF: rotate, delete, reorder, extract pages", self.action_pages),
             ("Compress", "Small, readable copies (<name>_small.pdf) to upload or send", self.action_compress),
             ("Queue folder", "Queue every PDF in the highlighted folder", self.action_queue_folder),
             ("Clear queue", "Empty the queue", self.action_clear_queue),
@@ -697,7 +917,7 @@ class PowerPDF(App):
 
     def say(self, line: str, tone: str = "foreground") -> None:
         color = self.get_css_variables()[tone]
-        self.query_one("#activity", RichLog).write(Text(line, style=color))
+        self.screen_stack[0].query_one("#activity", RichLog).write(Text(line, style=color))  # the main screen, whatever modal is on top
 
     # ── what's under the cursor ──────────────────────────────────────────────
 
@@ -999,7 +1219,7 @@ class PowerPDF(App):
         self.refresh_recent()
 
     def refresh_recent(self) -> None:
-        options = self.query_one(RecentList)
+        options = self.screen_stack[0].query_one(RecentList)
         highlighted = options.highlighted
         options.clear_options()
         options.add_options(
@@ -1195,11 +1415,25 @@ class PowerPDF(App):
         if pages:
             self.call_from_thread(self.push_screen, CardScreen(targets, pair_cards(pages)))
 
+    def action_pages(self) -> None:
+        path = self.focused_path()
+        if path and is_pdf(path):
+            self.push_screen(PagesScreen(path))
+        else:
+            self.notify("Highlight a PDF to see its pages.", severity="warning")
+
     def saved_card(self, *outputs: Path) -> None:
         self.say(f"✓ {' + '.join(map(str, outputs))} (front + back)", "success")
         self.notify(f"Saved → {', '.join(o.name for o in outputs)}")
         self.remember(*outputs)
         self.query_one(FileTree).reload()
+
+    def saved_pages(self, output: Path, count: int) -> None:
+        """A PagesScreen wrote output. It may still be open on top, so reach the main screen explicitly."""
+        self.say(f"✓ {output} ({count} pages)", "success")
+        self.notify(f"Saved → {output.name}")
+        self.remember(output)
+        self.screen_stack[0].query_one(FileTree).reload()
 
 
 def main() -> None:
