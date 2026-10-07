@@ -1,0 +1,29 @@
+[project]
+name = "powerpdf"
+version = "0.4.0"
+description = "A pixel-vibe terminal UI for exploring files and merging, splitting, and printing PDFs"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.3",
+    "opencv-python-headless>=5.0.0.93",
+    "pypdf>=6",
+    "pypdfium2>=4",
+    "send2trash>=2.1.0",
+    "textual>=8",
+    "textual-image>=0.14",
+]
+
+[project.scripts]
+powerpdf = "powerpdf:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["powerpdf", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

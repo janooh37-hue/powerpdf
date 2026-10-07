@@ -1,0 +1,331 @@
+"""End-to-end tests: drive the real app with Textual's pilot against real PDFs on disk."""
+
+import asyncio
+import os
+import shutil
+from pathlib import Path
+
+import cv2
+import numpy as np
+import pypdfium2 as pdfium
+import pytest
+from PIL import Image
+from pypdf import PdfReader, PdfWriter
+from textual.widgets import Input, Label, RichLog
+
+import pdf_card
+import powerpdf
+from powerpdf import FileTree, PowerPDF, PromptDialog, Splash
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path_factory, monkeypatch):
+    monkeypatch.setattr(powerpdf, "SETTINGS", tmp_path_factory.mktemp("settings") / "settings.json")
+
+
+def make_pdf(path: Path, pages: int = 1, size: int = 100) -> Path:
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(size, size)
+    writer.write(path)
+    return path
+
+
+def run(root: Path, scenario):
+    """Start the app in root, skip the splash, run scenario(app, pilot)."""
+    async def go():
+        app = PowerPDF(root)
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.press("z")  # any key skips the splash
+            await settle(app, pilot)
+            app.query_one(FileTree).focus()
+            await scenario(app, pilot)
+    asyncio.run(go())
+
+
+async def settle(app, pilot):
+    # DirectoryTree's "_loader" worker never finishes; wait for everything else.
+    # Cancelled previews raise on wait(); a real worker failure still crashes the app and fails run_test.
+    for _ in range(3):  # a finished worker can queue the next (tree load -> highlight -> preview)
+        pending = [w for w in app.workers if w.group != "_loader"]
+        await asyncio.gather(*(w.wait() for w in pending), return_exceptions=True)
+        await pilot.pause()
+
+
+async def highlight(app, pilot, name: str):
+    tree = app.query_one(FileTree)
+    tree.focus()
+    await settle(app, pilot)
+    tree.move_cursor(next(n for n in tree.root.children if n.data.path.name == name))
+    await settle(app, pilot)
+
+
+async def submit(app, pilot, value: str | None = None):
+    if value is not None:
+        app.screen.query_one(Input).value = value
+    await pilot.press("enter")
+    await settle(app, pilot)
+
+
+def log_lines(app) -> list[str]:
+    return [line.text for line in app.query_one(RichLog).lines]
+
+
+def test_splash_closes_by_itself(tmp_path):
+    async def go():
+        app = PowerPDF(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause(2)  # past the 1.5 s timer, no key pressed
+            assert not isinstance(app.screen, Splash)
+    asyncio.run(go())
+
+
+def test_merge_follows_queue_order_and_guards_overwrite(tmp_path):
+    make_pdf(tmp_path / "a.pdf", pages=1, size=100)
+    make_pdf(tmp_path / "b.pdf", pages=2, size=200)
+    merged = tmp_path / "merged.pdf"
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "b.pdf")
+        await pilot.press("space")
+        await highlight(app, pilot, "a.pdf")
+        await pilot.press("space")
+
+        await pilot.press("m")
+        await submit(app, pilot)
+        sizes = [int(page.mediabox.width) for page in PdfReader(merged).pages]
+        assert sizes == [200, 200, 100]  # queue order, not name order
+
+        await pilot.press("m")
+        await submit(app, pilot)
+        assert isinstance(app.screen, PromptDialog)  # existing file: first Enter only warns
+        assert "overwrite" in str(app.screen.query_one("#hint", Label).render())
+        await submit(app, pilot)
+        assert not isinstance(app.screen, PromptDialog)
+        assert sum(line.startswith("✓") for line in log_lines(app)) == 2
+        assert app.recent[0] == merged
+
+    run(tmp_path, scenario)
+
+
+def test_merge_refuses_a_queued_file_as_output(tmp_path):
+    make_pdf(tmp_path / "a.pdf")
+    make_pdf(tmp_path / "b.pdf")
+
+    async def scenario(app, pilot):
+        await pilot.press("a")  # queue the folder
+        await pilot.press("m")
+        await submit(app, pilot, str(tmp_path / "a.pdf"))
+        assert "input" in str(app.screen.query_one("#hint", Label).render())
+        await submit(app, pilot, str(tmp_path / "out.txt"))
+        assert ".pdf" in str(app.screen.query_one("#hint", Label).render())
+
+    run(tmp_path, scenario)
+
+
+def test_split_writes_pages_and_survives_a_broken_pdf(tmp_path):
+    make_pdf(tmp_path / "a.pdf", pages=3)
+    (tmp_path / "broken.pdf").write_text("not a pdf")
+
+    async def scenario(app, pilot):
+        await pilot.press("a", "s")
+        await settle(app, pilot)
+        assert sorted(p.name for p in (tmp_path / "a_pages").iterdir()) == [
+            "a_page_001.pdf", "a_page_002.pdf", "a_page_003.pdf",
+        ]
+        assert any(line.startswith("✗ broken.pdf") for line in log_lines(app))
+        assert app.recent == [tmp_path / "a.pdf"]  # only the successful split counts
+
+    run(tmp_path, scenario)
+
+
+def test_queue_reorder_and_remove(tmp_path):
+    for name in "abc":
+        make_pdf(tmp_path / f"{name}.pdf")
+
+    async def scenario(app, pilot):
+        await pilot.press("a")
+        app.query_one("#queue").focus()
+        await pilot.press("end", "shift+up")
+        assert [p.name for p in app.queue] == ["a.pdf", "c.pdf", "b.pdf"]
+        await pilot.press("delete")
+        assert [p.name for p in app.queue] == ["a.pdf", "b.pdf"]
+
+    run(tmp_path, scenario)
+
+
+def test_explore_folders_and_filter(tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    make_pdf(sub / "x.pdf")
+    (tmp_path / "notes.txt").write_text("hi")
+
+    async def scenario(app, pilot):
+        tree = app.query_one(FileTree)
+        names = lambda: [n.data.path.name for n in tree.root.children]
+        assert names() == ["sub"]  # PDFs only by default
+
+        await pilot.press("f")
+        await settle(app, pilot)
+        assert names() == ["sub", "notes.txt"]
+        await highlight(app, pilot, "notes.txt")
+        assert "TXT" in str(app.query_one("#info").render())
+
+        await highlight(app, pilot, "sub")
+        await pilot.press("o")
+        await settle(app, pilot)
+        assert app.root == sub and names() == ["x.pdf"]
+
+        await pilot.press("backspace")
+        await settle(app, pilot)
+        assert app.root == tmp_path
+
+        await pilot.press("g")
+        await submit(app, pilot, str(tmp_path / "missing"))
+        assert "Not a folder" in str(app.screen.query_one("#hint", Label).render())
+        await submit(app, pilot, str(sub))
+        assert app.root == sub
+
+    run(tmp_path, scenario)
+
+
+def test_preview_pages(tmp_path):
+    make_pdf(tmp_path / "two.pdf", pages=2)
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "two.pdf")
+        assert app.current == tmp_path / "two.pdf" and app.page_count == 2
+        for key, page in [("right_square_bracket", 1), ("right_square_bracket", 1), ("left_square_bracket", 0)]:
+            await pilot.press(key)
+            await settle(app, pilot)
+            assert app.page == page
+        await pilot.press("v")
+        assert type(app.query_one("#page")).__name__ == "HalfcellImage"
+
+    run(tmp_path, scenario)
+
+
+def test_rename_and_delete_keep_queue_and_recent_in_step(tmp_path, monkeypatch):
+    make_pdf(tmp_path / "a.pdf")
+    make_pdf(tmp_path / "b.pdf")
+    monkeypatch.setattr(powerpdf, "send2trash", lambda path: os.remove(path))
+    monkeypatch.setattr(powerpdf.os, "startfile", lambda path: None, raising=False)
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "a.pdf")
+        await pilot.press("space", "o")  # queue it and open it (-> recent)
+
+        await pilot.press("f2")
+        await submit(app, pilot, "b.pdf")
+        assert "taken" in str(app.screen.query_one("#hint", Label).render())
+        await submit(app, pilot, "renamed.pdf")
+        renamed = tmp_path / "renamed.pdf"
+        assert renamed.exists() and not (tmp_path / "a.pdf").exists()
+        assert app.queue == [renamed] and app.recent == [renamed]
+
+        await highlight(app, pilot, "renamed.pdf")
+        await pilot.press("delete", "n")
+        assert renamed.exists()  # "n" cancels
+        await pilot.press("delete", "y")
+        await settle(app, pilot)
+        assert not renamed.exists()
+        assert app.queue == [] and app.recent == []
+
+    run(tmp_path, scenario)
+
+
+def test_recent_and_theme_survive_restart(tmp_path, monkeypatch):
+    a, b = make_pdf(tmp_path / "a.pdf"), make_pdf(tmp_path / "b.pdf")
+    monkeypatch.setattr(powerpdf.os, "startfile", lambda path: None, raising=False)
+
+    async def first(app, pilot):
+        for name in ("a.pdf", "b.pdf"):
+            await highlight(app, pilot, name)
+            await pilot.press("o")
+        app.theme = "powerpdf-gameboy"
+        assert app.recent == [b, a]  # newest first
+
+    async def second(app, pilot):
+        assert app.recent == [b, a] and app.theme == "powerpdf-gameboy"
+        await pilot.press("r")  # Recent tab
+        assert app.focused is app.query_one("#recent")
+        await pilot.press("delete")  # forget the top entry
+        assert app.recent == [a]
+        a.unlink()
+
+    async def third(app, pilot):
+        assert app.recent == []  # missing files are dropped on load
+
+    run(tmp_path, first)
+    run(tmp_path, second)
+    run(tmp_path, third)
+
+
+FRONT, BACK = (200, 220, 240), (240, 200, 210)
+
+
+def make_scan(path: Path) -> Path:
+    """Two A4 pages at 300 dpi, each with a tilted ID-1 card (85.6 x 54 mm = 1011 x 638 px) on a white lid."""
+    pages = []
+    for color, angle in ((FRONT, 5), (BACK, -3)):
+        img = np.full((pdf_card.A4[1], pdf_card.A4[0], 3), 250, np.uint8)
+        box = cv2.boxPoints(((1100, 1500), (1011, 638), angle)).astype(np.int32)
+        cv2.fillPoly(img, [box], color)
+        pages.append(Image.fromarray(img))
+    pages[0].save(path, "PDF", resolution=300, save_all=True, append_images=pages[1:])
+    return path
+
+
+def test_card_front_and_back_on_one_page(tmp_path):
+    make_scan(tmp_path / "scan.pdf")
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "scan.pdf")
+        await pilot.press("k")
+        await settle(app, pilot)
+        screen = app.screen
+        assert isinstance(screen, powerpdf.CardScreen)
+        for (_, (w, h), angle), expected in zip(screen.rects, (5, -3)):
+            assert abs(w - 1011) < 8 and abs(h - 638) < 8 and abs(angle - expected) < 0.5
+        corner = np.asarray(pdf_card.cut(screen.pages[0], screen.rects[0]))[5:45, 5:45].astype(int)
+        assert abs(corner - FRONT).max() < 12  # straightened: the cut's corner is card, not lid
+
+        before = [angle for _, _, angle in screen.rects]
+        await pilot.press("right_square_bracket", "tab", "r")  # tilt the front, then flip the back
+        assert [angle for _, _, angle in screen.rects] == pytest.approx([before[0] - 0.5, before[1] + 180])
+
+        await pilot.press("enter")
+        await submit(app, pilot)
+        output = tmp_path / "scan_card.pdf"
+        assert app.recent[0] == output and not isinstance(app.screen, powerpdf.CardScreen)
+        pdf = pdfium.PdfDocument(output)
+        assert len(pdf) == 1 and [round(v) for v in pdf[0].get_size()] == [595, 842]  # A4
+        page = np.asarray(pdf[0].render(scale=300 / 72).to_pil().convert("RGB")).astype(int)
+        pdf.close()
+        top, x = pdf_card.MARGIN, pdf_card.A4[0] // 2
+        front_mid, back_mid = top + 319, top + 638 + pdf_card.GAP + 319  # real size, front above back
+        assert abs(page[front_mid, x] - FRONT).max() < 12 and abs(page[back_mid, x] - BACK).max() < 12
+
+    run(tmp_path, scenario)
+
+
+@pytest.mark.skipif(not shutil.which("gswin64c"), reason="needs Ghostscript")
+def test_compress_plain_and_cut_to_content(tmp_path):
+    make_scan(tmp_path / "scan.pdf")
+    output = tmp_path / "scan_small.pdf"
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "scan.pdf")
+        for keys, widths in [(("down", "enter"), (250, 270)), (("enter",), (595, 596))]:  # ebook+cut, then ebook
+            await pilot.press("c")
+            await pilot.press(*keys)
+            await settle(app, pilot)
+            pdf = pdfium.PdfDocument(output)
+            sizes = [round(page.get_size()[0]) for page in pdf]
+            pdf.close()
+            # cut: each page shrinks to the card (1011 px at 300 dpi = 243 pt, plus padding); plain keeps A4
+            assert len(sizes) == 2 and all(widths[0] <= w <= widths[1] for w in sizes), sizes
+        assert app.recent[0] == output
+        assert sum(line.startswith("✓ scan.pdf → scan_small.pdf") for line in log_lines(app)) == 2
+
+    run(tmp_path, scenario)
