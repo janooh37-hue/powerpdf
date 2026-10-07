@@ -16,6 +16,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 |---|---|
 | `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**17 passed**, `uv run --frozen pytest -q`, 40–75 s) |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–20 | `pdfSplit`, `pdfMerge`, `pdfCompress` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
+| `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command: `uv tool install --editable C:\Users\GSSG\projects\powerpdf` (env in `%APPDATA%\uv\tools\powerpdf`). Editable, so code edits apply at once, but `uv tool` **ignores `uv.lock`**: it resolves its own (newer) libs, e.g. opencv-headless 5.0, pypdf 6.19 vs the venv's. If the repo moves, rerun with `--force` |
 | `C:\Users\GSSG\Scripts\` | Old CLI copies **retired** (moved to the Recycle Bin 2026-10-07). Only `__pycache__` is left |
 | `C:\Users\GSSG\projects\powerdpf\` (typo) | Leftover old `.venv` only, waiting to be recycled by the setup agent once the terminal using it closes. Not code |
 
