@@ -33,11 +33,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from pdf_card import DPI, compose, cut, pair_cards, render_pages
-from pdf_compress import compress
-from pdf_merge import merge_pdfs
-from pdf_split import split_pdf
-
 VERSION = "0.4.0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
 RECENT_MAX = 30
@@ -419,6 +414,7 @@ class CardScreen(ModalScreen):
         self.action_switch(0)
 
     def show(self, i: int) -> None:
+        from pdf_card import DPI, cut
         (_, _), (w, h), angle = self.rects[i]
         self.query_one(f"#cut{i}").image = cut(self.pages[i], self.rects[i])
         mm = lambda px: px / DPI * 25.4
@@ -442,6 +438,7 @@ class CardScreen(ModalScreen):
         )
 
     def save(self, output: Path) -> None:
+        from pdf_card import compose, cut
         try:
             compose([cut(page, rect) for page, rect in zip(self.pages, self.rects)], output)
         except OSError as error:
@@ -914,6 +911,7 @@ class PowerPDF(App):
 
     @work(thread=True, group="jobs")
     def merge(self, queue: list[Path], output: Path) -> None:
+        from pdf_merge import merge_pdfs
         log = lambda line: self.call_from_thread(self.say, line)
         try:
             pages = merge_pdfs(queue, output, log)
@@ -933,6 +931,7 @@ class PowerPDF(App):
 
     @work(thread=True, group="jobs")
     def split(self, targets: list[Path]) -> None:
+        from pdf_split import split_pdf
         done = []
         for pdf in targets:
             try:
@@ -978,6 +977,7 @@ class PowerPDF(App):
 
     @work(thread=True, group="jobs")
     def compress_files(self, gs: str, targets: list[Path], choice: str) -> None:
+        from pdf_compress import compress
         quality, _, crop = choice.partition("+")
         done = []
         for pdf in targets:
@@ -1017,6 +1017,7 @@ class PowerPDF(App):
 
     @work(thread=True, group="jobs")
     def load_cards(self, targets: list[Path]) -> None:
+        from pdf_card import pair_cards, render_pages
         try:
             with PDFIUM_LOCK:
                 pages = render_pages(targets)
