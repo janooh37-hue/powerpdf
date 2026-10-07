@@ -1,4 +1,4 @@
-"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and save front and back as a card-sized PDF."""
+"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and save front and back as a card-sized PDF or JPGs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from PIL import Image
 
 DPI = 300  # render scans at true size, so cuts keep their real size
 OUT_DPI = 150  # saved cards: small files, text still readable
+JPEG = {"quality": 80, "optimize": True}
 
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
 
@@ -77,10 +78,21 @@ def pair_cards(pages: list[np.ndarray]) -> list[tuple[np.ndarray, Rect]]:
     return [(pages[0], rect) for rect in find_cards(pages[0], 2)]
 
 
+def downscale(card: Image.Image) -> Image.Image:
+    """The card at OUT_DPI: small files, text still readable."""
+    return card.resize((max(1, round(card.width * OUT_DPI / DPI)), max(1, round(card.height * OUT_DPI / DPI))), Image.LANCZOS)
+
+
 def save_cards(cards: list[Image.Image], output: Path) -> None:
     """One page per card, page = card, at OUT_DPI (small, still readable); no metadata beyond the Producer."""
     from pdf_compress import strip_metadata
 
-    pages = [card.resize((max(1, round(card.width * OUT_DPI / DPI)), max(1, round(card.height * OUT_DPI / DPI))), Image.LANCZOS) for card in cards]
-    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, quality=80, optimize=True)
+    pages = [downscale(card) for card in cards]
+    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, **JPEG)
     strip_metadata(output)
+
+
+def save_jpgs(cards: list[Image.Image], outputs: list[Path]) -> None:
+    """One JPEG per card at OUT_DPI; no EXIF (Pillow writes none unless asked)."""
+    for card, output in zip(cards, outputs):
+        downscale(card).save(output, "JPEG", dpi=(OUT_DPI, OUT_DPI), **JPEG)

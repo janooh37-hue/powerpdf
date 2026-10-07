@@ -375,10 +375,11 @@ class ChoiceDialog(ModalScreen[str | None]):
 
 
 class CardScreen(ModalScreen):
-    """Front and back cut out of scans: nudge each crop, then save both as a card-sized 2-page PDF."""
+    """Front and back cut out of scans: nudge each crop, then save both as a card-sized 2-page PDF or two JPGs."""
 
     BINDINGS = [
-        Binding("enter", "save", "Save"),
+        Binding("enter", "save", "Save PDF"),
+        Binding("j", "save_jpg", "Save JPG"),
         Binding("tab", "switch", "Front/Back"),
         Binding("left_square_bracket", "change(0, 0, 0, 0, 0.5)", "Tilt", key_display="[ ]"),
         Binding("right_square_bracket", "change(0, 0, 0, 0, -0.5)", "Tilt", show=False),
@@ -439,15 +440,27 @@ class CardScreen(ModalScreen):
             lambda value: value and self.save(Path(value).expanduser().resolve()),
         )
 
-    def save(self, output: Path) -> None:
-        from pdf_card import cut, save_cards
+    def action_save_jpg(self) -> None:
+        outputs = [self.sources[0].with_name(f"{self.sources[0].stem}_{side}.jpg") for side in ("front", "back")]
+        if existing := [o.name for o in outputs if o.exists()]:
+            self.app.push_screen(
+                ConfirmDialog(f"Overwrite [b]{escape(' and '.join(existing))}[/]?"),
+                lambda ok: ok and self.save(*outputs),
+            )
+        else:
+            self.save(*outputs)
+
+    def save(self, *outputs: Path) -> None:
+        """One output: a 2-page PDF. Two: front and back JPGs."""
+        from pdf_card import cut, save_cards, save_jpgs
         try:
-            save_cards([cut(page, rect) for page, rect in zip(self.pages, self.rects)], output)
+            cards = [cut(page, rect) for page, rect in zip(self.pages, self.rects)]
+            save_cards(cards, *outputs) if len(outputs) == 1 else save_jpgs(cards, list(outputs))
         except OSError as error:
             self.notify(f"Can't save: {error}", severity="error")
             return
         self.app.pop_screen()
-        self.app.saved_card(output)
+        self.app.saved_card(*outputs)
 
 
 class PowerPDF(App):
@@ -1083,10 +1096,10 @@ class PowerPDF(App):
         if pages:
             self.call_from_thread(self.push_screen, CardScreen(targets, pair_cards(pages)))
 
-    def saved_card(self, output: Path) -> None:
-        self.say(f"✓ {output} (front + back)", "success")
-        self.notify(f"Saved → {output.name}")
-        self.remember(output)
+    def saved_card(self, *outputs: Path) -> None:
+        self.say(f"✓ {' + '.join(map(str, outputs))} (front + back)", "success")
+        self.notify(f"Saved → {', '.join(o.name for o in outputs)}")
+        self.remember(*outputs)
         self.query_one(FileTree).reload()
 
 

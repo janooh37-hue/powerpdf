@@ -310,6 +310,31 @@ def test_card_front_and_back_as_card_sized_pages(tmp_path):
     run(tmp_path, scenario)
 
 
+def test_card_saves_front_and_back_jpgs(tmp_path):
+    make_scan(tmp_path / "scan.pdf")
+    front, back = tmp_path / "scan_front.jpg", tmp_path / "scan_back.jpg"
+    front.write_bytes(b"old")
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "scan.pdf")
+        await pilot.press("k")
+        await settle(app, pilot)
+        await pilot.press("j")  # front exists: asks first
+        assert isinstance(app.screen, powerpdf.ConfirmDialog)
+        await pilot.press("n")
+        assert isinstance(app.screen, powerpdf.CardScreen) and front.read_bytes() == b"old" and not back.exists()
+        await pilot.press("j", "y")
+        assert not isinstance(app.screen, powerpdf.CardScreen)
+        for path, color in ((front, FRONT), (back, BACK)):
+            with Image.open(path) as img:  # 1011 x 638 px at 300 dpi -> 506 x 319 px at 150 dpi
+                assert img.format == "JPEG" and abs(img.width - 506) < 3 and abs(img.height - 319) < 3
+                assert round(img.info["dpi"][0]) == 150 and not img.getexif() and "comment" not in img.info
+                assert abs(np.asarray(img.convert("RGB"))[160, 253].astype(int) - color).max() < 12
+
+    run(tmp_path, scenario)
+
+
+
 @pytest.mark.skipif(not shutil.which("gswin64c"), reason="needs Ghostscript")
 def test_compress_plain_and_cut_to_content(tmp_path):
     make_scan(tmp_path / "scan.pdf")
