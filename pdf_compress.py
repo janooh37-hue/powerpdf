@@ -73,7 +73,7 @@ def crop_to_content(gs: str, source: Path, staging: Path, dpi: int) -> None:
                 page = rendered.convert("RGB")
             box = content_box(page, dpi)
             pages.append(page.crop(box) if box else page)  # blank page: keep as is
-    pages[0].save(staging, "PDF", save_all=True, append_images=pages[1:], resolution=dpi, quality=80)
+    pages[0].save(staging, "PDF", save_all=True, append_images=pages[1:], resolution=dpi, quality=80, optimize=True)
 
 
 def compress(gs: str, source: Path, quality: str, crop: bool) -> Path:
