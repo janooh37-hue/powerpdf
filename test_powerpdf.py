@@ -268,7 +268,7 @@ def make_scan(path: Path) -> Path:
     """Two A4 pages at 300 dpi, each with a tilted ID-1 card (85.6 x 54 mm = 1011 x 638 px) on a white lid."""
     pages = []
     for color, angle in ((FRONT, 5), (BACK, -3)):
-        img = np.full((pdf_card.A4[1], pdf_card.A4[0], 3), 250, np.uint8)
+        img = np.full((3508, 2480, 3), 250, np.uint8)
         box = cv2.boxPoints(((1100, 1500), (1011, 638), angle)).astype(np.int32)
         cv2.fillPoly(img, [box], color)
         pages.append(Image.fromarray(img))
@@ -276,7 +276,7 @@ def make_scan(path: Path) -> Path:
     return path
 
 
-def test_card_front_and_back_on_one_page(tmp_path):
+def test_card_front_and_back_as_card_sized_pages(tmp_path):
     make_scan(tmp_path / "scan.pdf")
 
     async def scenario(app, pilot):
@@ -299,12 +299,13 @@ def test_card_front_and_back_on_one_page(tmp_path):
         output = tmp_path / "scan_card.pdf"
         assert app.recent[0] == output and not isinstance(app.screen, powerpdf.CardScreen)
         pdf = pdfium.PdfDocument(output)
-        assert len(pdf) == 1 and [round(v) for v in pdf[0].get_size()] == [595, 842]  # A4
-        page = np.asarray(pdf[0].render(scale=300 / 72).to_pil().convert("RGB")).astype(int)
+        assert len(pdf) == 2  # card-sized pages at 150 dpi (1011 x 638 px at 300 dpi -> 506 x 319 px = 243 x 153 pt), front first
+        assert all(abs(w - 243) < 2 and abs(h - 153) < 2 for w, h in (pdf[i].get_size() for i in range(2)))
+        mids = [np.asarray(pdf[i].render(scale=150 / 72).to_pil().convert("RGB"))[160, 253].astype(int) for i in range(2)]
         pdf.close()
-        top, x = pdf_card.MARGIN, pdf_card.A4[0] // 2
-        front_mid, back_mid = top + 319, top + 638 + pdf_card.GAP + 319  # real size, front above back
-        assert abs(page[front_mid, x] - FRONT).max() < 12 and abs(page[back_mid, x] - BACK).max() < 12
+        assert abs(mids[0] - FRONT).max() < 12 and abs(mids[1] - BACK).max() < 12  # the card fills the page
+        reader = PdfReader(output)
+        assert set(reader.metadata or {}) <= {"/Producer"} and all(len(page.images) == 1 for page in reader.pages)
 
     run(tmp_path, scenario)
 

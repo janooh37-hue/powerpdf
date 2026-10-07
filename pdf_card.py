@@ -1,4 +1,4 @@
-"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and put front and back on one A4 page."""
+"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and save front and back as a card-sized PDF."""
 
 from __future__ import annotations
 
@@ -9,10 +9,8 @@ import numpy as np
 import pypdfium2 as pdfium
 from PIL import Image
 
-DPI = 300  # render scans at true size, so cut cards print at their real size
-A4 = (2480, 3508)  # A4 in pixels at DPI
-MARGIN = 236  # 20 mm
-GAP = 118  # 10 mm between front and back
+DPI = 300  # render scans at true size, so cuts keep their real size
+OUT_DPI = 150  # saved cards: small files, text still readable
 
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
 
@@ -79,14 +77,10 @@ def pair_cards(pages: list[np.ndarray]) -> list[tuple[np.ndarray, Rect]]:
     return [(pages[0], rect) for rect in find_cards(pages[0], 2)]
 
 
-def compose(cards: list[Image.Image], output: Path) -> None:
-    """Cards stacked top to bottom on a white A4 page, real size (shrunk only if they don't fit)."""
-    page = Image.new("RGB", A4, "white")
-    room = ((A4[0] - 2 * MARGIN), (A4[1] - 2 * MARGIN - GAP * (len(cards) - 1)) // len(cards))
-    y = MARGIN
-    for card in cards:
-        card = card.copy()
-        card.thumbnail(room)
-        page.paste(card, ((A4[0] - card.width) // 2, y))
-        y += card.height + GAP
-    page.save(output, "PDF", resolution=DPI, quality=92)
+def save_cards(cards: list[Image.Image], output: Path) -> None:
+    """One page per card, page = card, at OUT_DPI (small, still readable); no metadata beyond the Producer."""
+    from pdf_compress import strip_metadata
+
+    pages = [card.resize((max(1, round(card.width * OUT_DPI / DPI)), max(1, round(card.height * OUT_DPI / DPI))), Image.LANCZOS) for card in cards]
+    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, quality=80, optimize=True)
+    strip_metadata(output)

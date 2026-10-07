@@ -375,7 +375,7 @@ class ChoiceDialog(ModalScreen[str | None]):
 
 
 class CardScreen(ModalScreen):
-    """Front and back cut out of scans: nudge each crop, then save both on one A4 page."""
+    """Front and back cut out of scans: nudge each crop, then save both as a card-sized 2-page PDF."""
 
     BINDINGS = [
         Binding("enter", "save", "Save"),
@@ -440,9 +440,9 @@ class CardScreen(ModalScreen):
         )
 
     def save(self, output: Path) -> None:
-        from pdf_card import compose, cut
+        from pdf_card import cut, save_cards
         try:
-            compose([cut(page, rect) for page, rect in zip(self.pages, self.rects)], output)
+            save_cards([cut(page, rect) for page, rect in zip(self.pages, self.rects)], output)
         except OSError as error:
             self.notify(f"Can't save: {error}", severity="error")
             return
@@ -605,7 +605,7 @@ class PowerPDF(App):
             ("Merge queue", "Merge queued PDFs into one file", self.action_merge),
             ("Split", "Split queued (or highlighted) PDFs into single pages", self.action_split),
             ("Print", "Print queued (or highlighted) PDFs", self.action_print),
-            ("Card front + back", "Cut a scanned card's front and back onto one A4 page", self.action_card),
+            ("Card front + back", "Cut a scanned card's front and back into a small card-sized PDF", self.action_card),
             ("Compress", "Small, readable copies (<name>_small.pdf) to upload or send", self.action_compress),
             ("Queue folder", "Queue every PDF in the highlighted folder", self.action_queue_folder),
             ("Clear queue", "Empty the queue", self.action_clear_queue),
