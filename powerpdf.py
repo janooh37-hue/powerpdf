@@ -464,6 +464,68 @@ class CardScreen(ModalScreen):
         self.app.saved_card(*outputs)
 
 
+class CompareScreen(ModalScreen):
+    """A PDF and its _small copy side by side, with sizes and the percent saved. [ ] flips both, up to the shorter one's last page."""
+
+    BINDINGS = [
+        Binding("left_square_bracket", "page(-1)", "Prev page", key_display="[ ]"),
+        Binding("right_square_bracket", "page(1)", "Next page", show=False),
+        Binding("escape", "dismiss(None)", "Close"),
+    ]
+
+    def __init__(self, original: Path, small: Path) -> None:
+        super().__init__()
+        self.paths = (original, small)
+        self.sizes = [path.stat().st_size for path in self.paths]
+        self.page = 0
+        self.count = 1  # pages both docs have; known after the first render
+
+    def compose(self) -> ComposeResult:
+        image = HalfcellImage if self.app.pixel_mode else SharpImage
+        before, after = self.sizes
+        change = round((after - before) / max(before, 1) * 100)
+        verdict = f"[b $success]−{-change}%[/]" if change <= 0 else f"[b $error]+{change}% (larger)[/]"
+        yield Static(f"{verdict} ({human_size(before)} → {human_size(after)})", id="saved")
+        with Horizontal():
+            for i, (label, path) in enumerate(zip(("Original", "Small"), self.paths)):
+                with Vertical(id=f"side{i}", classes="panel compare") as panel:
+                    panel.border_title = f"{label} · {path.name}"
+                    yield image(id=f"shot{i}", classes="shot")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self.load, 0)  # after layout, so the panels have a size
+
+    def action_page(self, step: int) -> None:
+        if 0 <= self.page + step < self.count:
+            self.load(self.page + step)
+
+    @work(thread=True, exclusive=True, group="compare")
+    def load(self, page: int) -> None:
+        """Render both sides. Each PDF is opened from bytes and closed again, so no pdfium handle outlives a render."""
+        shots = []
+        try:
+            for i, path in enumerate(self.paths):
+                with PDFIUM_LOCK:
+                    mtime = path.stat().st_mtime_ns
+                    pdf = pdfium.PdfDocument(path.read_bytes())
+                    try:
+                        shots.append((self.app.render_cached(pdf, path, mtime, page, self.query_one(f"#side{i}")), len(pdf)))
+                    finally:
+                        pdf.close()
+        except (pdfium.PdfiumError, OSError) as error:
+            self.app.call_from_thread(self.notify, f"Can't compare: {error}", severity="error")
+            return
+        if not get_current_worker().is_cancelled:
+            self.app.call_from_thread(self.show, page, shots)
+
+    def show(self, page: int, shots: list) -> None:
+        self.page, self.count = page, min(count for _, count in shots)
+        for i, (image, count) in enumerate(shots):
+            self.query_one(f"#shot{i}").image = image
+            self.query_one(f"#side{i}").border_subtitle = f"{human_size(self.sizes[i])} · page {page + 1}/{count}"
+
+
 class PowerPDF(App):
     TITLE = "PowerPDF"
     CSS = """
@@ -502,6 +564,10 @@ class PowerPDF(App):
 
     PromptDialog, ConfirmDialog, PrinterDialog, ChoiceDialog { align: center middle; background: $background 60%; }
     CardScreen { background: $background; }
+    CompareScreen { background: $background; }
+    CompareScreen #saved { height: 1; padding: 0 1; background: $panel; }
+    CompareScreen .compare { width: 1fr; align: center middle; }
+    CompareScreen .shot { width: auto; height: 1fr; }
     CardScreen .card { width: 1fr; align: center middle; }
     CardScreen .card.-active { border: round $primary; border-title-color: $primary; border-title-style: bold; }
     CardScreen .cut { width: 1fr; height: auto; }
@@ -521,6 +587,7 @@ class PowerPDF(App):
         Binding("p", "print", "Print"),
         Binding("k", "card", "Card"),
         Binding("c", "compress", "Compress"),
+        Binding("d", "compare", "Compare"),
         Binding("r", "toggle_recent", "Recent"),
         Binding("question_mark", "show_help_panel", "Keys", key_display="?"),
         Binding("q", "quit", "Quit"),
@@ -620,6 +687,7 @@ class PowerPDF(App):
             ("Split", "Split queued (or highlighted) PDFs into single pages", self.action_split),
             ("Print", "Print queued (or highlighted) PDFs", self.action_print),
             ("Card front + back", "Cut a scanned card's front and back into a small card-sized PDF", self.action_card),
+            ("Compare", "Show the highlighted PDF and its _small copy side by side", self.action_compare),
             ("Compress", "Small, readable copies (<name>_small.pdf) to upload or send", self.action_compress),
             ("Queue folder", "Queue every PDF in the highlighted folder", self.action_queue_folder),
             ("Clear queue", "Empty the queue", self.action_clear_queue),
@@ -686,10 +754,10 @@ class PowerPDF(App):
             self.page += step
             self.load_preview(self.current, self.page)
 
-    def preview_scale(self, width: float, height: float) -> float:
-        """Scale at which a page just fills the preview panel's pixels, never above 1.5.
+    def preview_scale(self, width: float, height: float, panel=None) -> float:
+        """Scale at which a page just fills the panel's pixels (the preview's by default), never above 1.5.
         Half-block mode shows fewer pixels than sixel, so sizing for sixel is sharp in both."""
-        box, cell = self.query_one("#preview").content_size, get_cell_size()
+        box, cell = (panel or self.query_one("#preview")).content_size, get_cell_size()
         max_w, max_h = (box.width * cell.width, box.height * cell.height) if box.width and box.height else (1600, 1600)
         return min(1.5, max_w / width, max_h / height)
 
@@ -707,11 +775,11 @@ class PowerPDF(App):
             self.doc = (path, mtime, pdfium.PdfDocument(path.read_bytes()))
         return self.doc[2]
 
-    def render_cached(self, pdf: pdfium.PdfDocument, path: Path, mtime: int, page: int):
+    def render_cached(self, pdf: pdfium.PdfDocument, path: Path, mtime: int, page: int, panel=None):
         """Rendered page image, from the LRU if shown before. The caller holds PDFIUM_LOCK."""
         page_obj = pdf[page]
         try:
-            scale = self.preview_scale(*page_obj.get_size())
+            scale = self.preview_scale(*page_obj.get_size(), panel)
             key = (path, mtime, page, scale)
             if key in self.page_cache:
                 self.page_cache.move_to_end(key)
@@ -1098,6 +1166,16 @@ class PowerPDF(App):
         self.call_from_thread(self.notify, f"Sent {len(done)}/{len(targets)} to {printer}",
                               severity="information" if len(done) == len(targets) else "error")
         self.call_from_thread(self.remember, *done)
+
+    def action_compare(self) -> None:
+        path = self.focused_path()
+        if path and is_pdf(path):
+            stem = path.stem
+            original, small = (path.with_name(stem[:-6] + path.suffix), path) if stem.endswith("_small") else (path, path.with_name(f"{stem}_small.pdf"))
+            if is_pdf(original) and is_pdf(small):
+                self.push_screen(CompareScreen(original, small))
+                return
+        self.notify("Highlight a PDF that has a _small copy next to it (X.pdf and X_small.pdf).", severity="warning")
 
     def action_card(self) -> None:
         if not (targets := self.targets()):

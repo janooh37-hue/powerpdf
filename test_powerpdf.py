@@ -234,6 +234,37 @@ def test_preview_pages(tmp_path):
     run(tmp_path, scenario)
 
 
+def test_compare_original_and_small(tmp_path):
+    make_pdf(tmp_path / "a.pdf", pages=3)
+    make_pdf(tmp_path / "a_small.pdf", pages=2)
+    make_pdf(tmp_path / "lonely.pdf")
+    original, small = [(tmp_path / name).stat().st_size for name in ("a.pdf", "a_small.pdf")]
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "lonely.pdf")
+        await pilot.press("d")
+        assert not isinstance(app.screen, powerpdf.CompareScreen)  # no counterpart: toast only
+        for name in ("a.pdf", "a_small.pdf"):  # either file opens the same comparison
+            await highlight(app, pilot, name)
+            await pilot.press("d")
+            await settle(app, pilot)
+            screen = app.screen
+            assert isinstance(screen, powerpdf.CompareScreen) and screen.paths == (tmp_path / "a.pdf", tmp_path / "a_small.pdf")
+            saved = str(screen.query_one("#saved").render())
+            assert f"{powerpdf.human_size(original)} → {powerpdf.human_size(small)}" in saved and f"−{round((1 - small / original) * 100)}%" in saved
+            assert screen.query_one("#shot0").image is not None and screen.query_one("#shot1").image is not None
+            assert [screen.query_one(f"#side{i}").border_subtitle for i in range(2)] == [
+                f"{powerpdf.human_size(size)} · page 1/{pages}" for size, pages in ((original, 3), (small, 2))]
+            for key, page in [("right_square_bracket", 1), ("right_square_bracket", 1), ("left_square_bracket", 0)]:  # 2nd ] stops at the shorter doc's last page
+                await pilot.press(key)
+                await settle(app, pilot)
+                assert screen.page == page
+            await pilot.press("escape")
+            assert app.screen is not screen and not isinstance(app.screen, powerpdf.CompareScreen)
+
+    run(tmp_path, scenario)
+
+
 def test_rename_and_delete_keep_queue_and_recent_in_step(tmp_path, monkeypatch):
     make_pdf(tmp_path / "a.pdf")
     make_pdf(tmp_path / "b.pdf")
