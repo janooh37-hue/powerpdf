@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -22,7 +23,7 @@ from send2trash import send2trash
 # so it must be imported before the app starts.
 from textual_image.widget import HalfcellImage, Image as SharpImage
 from textual_image._terminal import get_cell_size
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Middle, Vertical
@@ -796,6 +797,26 @@ class PowerPDF(App):
 
     def action_home(self) -> None:
         self.go_to(Path.home())
+
+    def on_paste(self, event: events.Paste) -> None:
+        """A file dropped on Windows Terminal arrives as pasted, quoted paths. An Input takes (and stops)
+        its own pastes, so this only sees the rest; dialogs and the splash ignore them."""
+        if self.screen is not self.screen_stack[0]:
+            return
+        try:
+            tokens = shlex.split(event.text, posix=False)
+        except ValueError:  # unbalanced quote: not a dropped path
+            return
+        paths = [Path(t.strip("\"'")) for t in tokens]
+        folders = [p for p in paths if p.is_dir()]
+        pdfs = [p.resolve() for p in paths if is_pdf(p)]
+        new = [p for p in dict.fromkeys(pdfs) if p not in self.queue]
+        if new:
+            self.queue += new
+            self.refresh_queue(len(self.queue) - 1)
+            self.notify(f"Queued {len(new)} PDF{'s' * (len(new) > 1)}", timeout=2)
+        if folders:  # a mix queues the PDFs, then goes to the last folder
+            self.go_to(folders[-1].resolve())
 
     def action_toggle_all(self) -> None:
         tree = self.query_one(FileTree)

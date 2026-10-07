@@ -11,6 +11,7 @@ import pypdfium2 as pdfium
 import pytest
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
+from textual import events
 from textual.widgets import Input, Label, RichLog
 
 import pdf_card
@@ -184,6 +185,34 @@ def test_explore_folders_and_filter(tmp_path):
         await submit(app, pilot, str(tmp_path / "missing"))
         assert "Not a folder" in str(app.screen.query_one("#hint", Label).render())
         await submit(app, pilot, str(sub))
+        assert app.root == sub
+
+    run(tmp_path, scenario)
+
+
+def test_dropped_paths_are_queued_or_navigated_to(tmp_path):
+    arabic = make_pdf(tmp_path / "رخصة.pdf")
+    spaced = make_pdf(tmp_path / "a b.pdf")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    toasts = lambda app: [n.message for n in app._notifications]
+
+    async def scenario(app, pilot):
+        # a real terminal paste is posted to the app, which forwards it to the focused widget
+        app.post_message(events.Paste(f'"{spaced}" "{arabic}"\n{tmp_path / "missing.pdf"} not a path'))
+        await settle(app, pilot)
+        assert app.queue == [spaced, arabic]
+        assert toasts(app) == ["Queued 2 PDFs"]
+
+        await pilot.press("g")  # an Input keeps its own paste: nothing queued, no navigation
+        app.post_message(events.Paste(f'"{sub}"'))
+        await settle(app, pilot)
+        assert f'"{sub}"' in app.screen.query_one(Input).value
+        assert app.queue == [spaced, arabic] and app.root == tmp_path
+        await pilot.press("escape")
+
+        app.post_message(events.Paste(f'"{sub}"'))
+        await settle(app, pilot)
         assert app.root == sub
 
     run(tmp_path, scenario)
