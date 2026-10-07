@@ -553,7 +553,7 @@ class CompareScreen(ModalScreen):
                     mtime = path.stat().st_mtime_ns
                     pdf = pdfium.PdfDocument(path.read_bytes())
                     try:
-                        shots.append((self.app.render_cached(pdf, path, mtime, page, self.query_one(f"#side{i}")), len(pdf)))
+                        shots.append((self.app.render_cached(pdf, path, mtime, page), len(pdf)))
                     finally:
                         pdf.close()
         except (pdfium.PdfiumError, OSError) as error:
@@ -1015,11 +1015,12 @@ class PowerPDF(App):
             self.load_preview(self.current, self.page)
 
     def preview_scale(self, width: float, height: float, panel=None) -> float:
-        """Scale at which a page just fills the panel's pixels (the preview's by default), never above 1.5.
-        Half-block mode shows fewer pixels than sixel, so sizing for sixel is sharp in both."""
-        box, cell = (panel or self.query_one("#preview")).content_size, get_cell_size()
-        max_w, max_h = (box.width * cell.width, box.height * cell.height) if box.width and box.height else (1600, 1600)
-        return min(1.5, max_w / width, max_h / height)
+        """Render scale, never above 1.5, long side capped at 1600 px. Only a fixed-size `panel` (page-grid thumbnails)
+        shrinks it further: a live panel can be measured mid-layout or resized later, which left the preview tiny and blurry."""
+        if panel is None:
+            return min(1.5, 1600 / max(width, height))
+        box, cell = panel.content_size, get_cell_size()
+        return min(1.5, box.width * cell.width / width, box.height * cell.height / height)
 
     def close_doc(self) -> None:
         """Close the open preview PDF. The caller holds PDFIUM_LOCK."""

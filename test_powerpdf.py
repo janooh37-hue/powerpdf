@@ -33,11 +33,11 @@ def make_pdf(path: Path, pages: int = 1, size: int = 100) -> Path:
     return path
 
 
-def run(root: Path, scenario):
+def run(root: Path, scenario, size=(140, 40)):
     """Start the app in root, skip the splash, run scenario(app, pilot)."""
     async def go():
         app = PowerPDF(root)
-        async with app.run_test(size=(140, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await pilot.press("z")  # any key skips the splash
             await settle(app, pilot)
             app.query_one(FileTree).focus()
@@ -233,6 +233,19 @@ def test_preview_pages(tmp_path):
         assert type(app.query_one("#page")).__name__ == "HalfcellImage"
 
     run(tmp_path, scenario)
+
+
+def test_preview_render_ignores_panel_size(tmp_path):
+    make_pdf(tmp_path / "a_normal.pdf", size=600)
+    make_pdf(tmp_path / "b_huge.pdf", size=2000)
+
+    async def scenario(app, pilot):
+        assert 0 < app.query_one("#preview").content_size.width < 40  # tiny but laid-out panel: the old panel-sized render was far smaller
+        for name, side in [("a_normal.pdf", 900), ("b_huge.pdf", 1600)]:  # 600 pt x 1.5; 2000 pt capped to a 1600 px long side
+            await highlight(app, pilot, name)
+            assert app.query_one("#page").image.size == (side, side)
+
+    run(tmp_path, scenario, size=(90, 30))
 
 
 def test_compare_original_and_small(tmp_path):

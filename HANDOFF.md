@@ -14,7 +14,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**17 passed**, `uv run --frozen pytest -q`, 40–75 s) |
+| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**18 passed**, `uv run --frozen pytest -q`, 40–75 s) |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–20 | `pdfSplit`, `pdfMerge`, `pdfCompress` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command: `uv tool install --editable C:\Users\GSSG\projects\powerpdf` (env in `%APPDATA%\uv\tools\powerpdf`). Editable, so code edits apply at once, but `uv tool` **ignores `uv.lock`**: it resolves its own (newer) libs, e.g. opencv-headless 5.0, pypdf 6.19 vs the venv's. If the repo moves, rerun with `--force` |
 | `C:\Users\GSSG\Scripts\` | Old CLI copies **retired** (moved to the Recycle Bin 2026-10-07). Only `__pycache__` is left |
@@ -68,6 +68,7 @@ New in 0.5.0:
 - **Card pairing:** `pair_cards` takes one card from each of the first two pages, or two cards from a single page. The license reference has front + back of a *different vehicle* on each page, so running `k` on the 2-page file gives two backs. Run it on one page (split first) for a real front + back.
 - The preview LRU holds 16 renders; opening the page grid on a long PDF flushes it (the main preview re-renders on demand).
 - `import powerpdf` still loads numpy and PIL because `textual_image` (sixel) needs them; cv2/pypdf are deferred.
+- **Preview resolution must not follow the panel size.** Sizing the render from the panel's current cells (tried in 0.5.0) gave a tiny, blurry page whenever the panel wasn't laid out yet (splash on top, window resized or font zoomed later), and the cache kept it. `textual_image` already resizes to the widget with Pillow; just hand it ≤1.5× / ≤1600 px. Windows Terminal doesn't answer the cell-size query, so textual_image assumes 10×20 px cells.
 
 ## Reference files (read-only; never modify originals in Downloads)
 
@@ -79,7 +80,7 @@ New in 0.5.0:
 | Item | Before (0.4.0) | After (0.5.0) |
 |---|---|---|
 | `import powerpdf`, warm, median of 5 interleaved runs | 0.74 s (cv2, pypdf, numpy, PIL) | 0.59 s (no cv2, no pypdf) |
-| Certificate preview render, page 1 | 2852×4047, 121–154 ms | panel-sized (395×560 at 140×40 cells), 40 ms; ≤1600 px cap when panel unknown: 1128×1600, 35 ms |
+| Certificate preview render, page 1 | 2852×4047, 121–154 ms | 1128×1600 (scale ≤1.5, long side ≤1600 px), 35 ms. License unchanged: 894×1263 |
 | License preview page flip | reopen + render every time | cached revisit 2–4 ms, 0 renders; next page prefetched |
 | Card output (license, one page) | A4 2480×3508, 300 dpi q92, 467 KB | 2 pages 85.2×54.4 / 85.5×54.5 mm, 83 KB |
 | Card JPGs | — | front 41 KB, back 40 KB (back with a black box: 46 KB, 4:4:4) |
@@ -112,7 +113,7 @@ OpenCV finds the license cards at 86×54 / 85×54 mm, tilted ~0.8° / ~2.3°; Te
 28. Phone photo to clean PDF: crop and straighten with the existing `pdf_card` code; the implementation of #11.
 29. Copy a PDF's text to the clipboard (pypdfium2).
 
-Done in 0.5.0: 1, 2, 4, 6, 16 (deferred imports), 17 (panel-sized preview), 18 (preview cache), 19 (drag and drop),
+Done in 0.5.0: 1, 2, 4, 6, 16 (deferred imports), 17 (1600 px preview cap), 18 (preview cache), 19 (drag and drop),
 21 (compare), 24 (page grid), 25 (redact), 30 (folder rename), CLI single source of truth.
 
 Rejected, with reasons: linearization (needs qpdf/pikepdf, no gain at ~100 KB), grayscale (~12% smaller, loses colour),
@@ -122,5 +123,6 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 - CLI: run in a `$env:TEMP` copy folder with real scans, including an Arabic-named file. Check exit codes 0/1/2.
 - Look at outputs: `PdfReader(f).pages[0].images[0].image.save(...)` and view it. Readability of the license card is the acceptance bar.
-- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (17 tests, end-to-end through Textual's pilot).
+- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (18 tests, end-to-end through Textual's pilot).
 - Real TUI: in Herdr, split a pane, `pane run` the app in a temp copy folder, `pane send-keys` keys, `pane read --source visible`.
+  Herdr panes don't draw sharp (Sixel) images, so judge preview quality in a plain Windows Terminal window (`wt.exe -w new`) plus a desktop screenshot.
