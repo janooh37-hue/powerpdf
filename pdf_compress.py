@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject
 
 from pdf_split import find_pdfs
 
@@ -76,6 +78,14 @@ def crop_to_content(gs: str, source: Path, staging: Path, dpi: int) -> None:
     pages[0].save(staging, "PDF", save_all=True, append_images=pages[1:], resolution=dpi, quality=80, optimize=True)
 
 
+def strip_metadata(path: Path) -> None:
+    """Drop the Info dictionary (title, dates, producer, ...) and the XMP stream, in place."""
+    writer = PdfWriter(clone_from=io.BytesIO(path.read_bytes()))
+    writer.metadata = None
+    writer._root_object.pop(NameObject("/Metadata"), None)
+    writer.write(path)
+
+
 def compress(gs: str, source: Path, quality: str, crop: bool) -> Path:
     output = source.with_name(f"{source.stem}{SUFFIX}.pdf")
     staging = source.with_name(f".{source.stem}{SUFFIX}.tmp.pdf")
@@ -89,6 +99,7 @@ def compress(gs: str, source: Path, quality: str, crop: bool) -> Path:
             # already-optimized PDFs can come out bigger; then just ship the original
             if staging.stat().st_size >= source.stat().st_size:
                 shutil.copyfile(source, staging)
+        strip_metadata(staging)
         staging.replace(output)
         return output
     finally:
