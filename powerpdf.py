@@ -20,6 +20,7 @@ from send2trash import send2trash
 # textual_image probes the terminal (sixel / kitty graphics / half-blocks) on import,
 # so it must be imported before the app starts.
 from textual_image.widget import HalfcellImage, Image as SharpImage
+from textual_image._terminal import get_cell_size
 from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
@@ -666,6 +667,13 @@ class PowerPDF(App):
             self.page += step
             self.load_preview(self.current, self.page)
 
+    def preview_scale(self, width: float, height: float) -> float:
+        """Scale at which a page just fills the preview panel's pixels, never above 1.5.
+        Half-block mode shows fewer pixels than sixel, so sizing for sixel is sharp in both."""
+        box, cell = self.query_one("#preview").content_size, get_cell_size()
+        max_w, max_h = (box.width * cell.width, box.height * cell.height) if box.width and box.height else (1600, 1600)
+        return min(1.5, max_w / width, max_h / height)
+
     @work(thread=True, exclusive=True, group="preview")
     def load_preview(self, path: Path, page: int) -> None:
         try:
@@ -673,7 +681,8 @@ class PowerPDF(App):
                 pdf = pdfium.PdfDocument(path)
                 try:
                     count = len(pdf)
-                    image = pdf[page].render(scale=1.5).to_pil()
+                    page_obj = pdf[page]
+                    image = page_obj.render(scale=self.preview_scale(*page_obj.get_size())).to_pil()
                     meta = pdf.get_metadata_dict(skip_empty=True)
                 finally:
                     pdf.close()
