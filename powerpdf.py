@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -532,6 +533,8 @@ class PowerPDF(App):
         self.current: Path | None = None  # PDF in the preview
         self.page = 0
         self.page_count = 0
+        self.doc: tuple[Path, int, pdfium.PdfDocument] | None = None  # open preview PDF; guarded by PDFIUM_LOCK
+        self.page_cache: OrderedDict = OrderedDict()  # (path, mtime_ns, page, scale) -> image, 16 newest; guarded by PDFIUM_LOCK
         self.pixel_mode = False
         try:
             self.settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
@@ -650,6 +653,8 @@ class PowerPDF(App):
             self.load_preview(path, 0)
             return
         self.current = None
+        with PDFIUM_LOCK:
+            self.close_doc()
         self.query_one("#page").display = False
         self.query_one("#empty").display = True
         self.query_one("#preview").border_subtitle = ""
@@ -674,23 +679,63 @@ class PowerPDF(App):
         max_w, max_h = (box.width * cell.width, box.height * cell.height) if box.width and box.height else (1600, 1600)
         return min(1.5, max_w / width, max_h / height)
 
+    def close_doc(self) -> None:
+        """Close the open preview PDF. The caller holds PDFIUM_LOCK."""
+        if self.doc:
+            self.doc[2].close()
+            self.doc = None
+
+    def open_doc(self, path: Path, mtime: int) -> pdfium.PdfDocument:
+        """The preview PDF, reopened only when the selection or the file changed. The caller holds PDFIUM_LOCK.
+        Opens from bytes: a path would make pdfium keep a file handle, and Windows then blocks rename, delete and overwrite."""
+        if not self.doc or self.doc[:2] != (path, mtime):
+            self.close_doc()
+            self.doc = (path, mtime, pdfium.PdfDocument(path.read_bytes()))
+        return self.doc[2]
+
+    def render_cached(self, pdf: pdfium.PdfDocument, path: Path, mtime: int, page: int):
+        """Rendered page image, from the LRU if shown before. The caller holds PDFIUM_LOCK."""
+        page_obj = pdf[page]
+        try:
+            scale = self.preview_scale(*page_obj.get_size())
+            key = (path, mtime, page, scale)
+            if key in self.page_cache:
+                self.page_cache.move_to_end(key)
+                return self.page_cache[key]
+            image = self.page_cache[key] = page_obj.render(scale=scale).to_pil()
+        finally:
+            page_obj.close()
+        if len(self.page_cache) > 16:
+            self.page_cache.popitem(last=False)
+        return image
+
     @work(thread=True, exclusive=True, group="preview")
     def load_preview(self, path: Path, page: int) -> None:
+        worker = get_current_worker()
         try:
             with PDFIUM_LOCK:
-                pdf = pdfium.PdfDocument(path)
-                try:
-                    count = len(pdf)
-                    page_obj = pdf[page]
-                    image = page_obj.render(scale=self.preview_scale(*page_obj.get_size())).to_pil()
-                    meta = pdf.get_metadata_dict(skip_empty=True)
-                finally:
-                    pdf.close()
+                mtime = path.stat().st_mtime_ns
+                pdf = self.open_doc(path, mtime)
+                count = len(pdf)
+                image = self.render_cached(pdf, path, mtime, page)
+                meta = pdf.get_metadata_dict(skip_empty=True)
         except (pdfium.PdfiumError, OSError) as error:
             self.call_from_thread(self.show_info, path, f"[$error]Can't open: {escape(str(error))}[/]")
             return
-        if not get_current_worker().is_cancelled:
-            self.call_from_thread(self.show_preview, path, page, count, image, meta)
+        if worker.is_cancelled:
+            return
+        self.call_from_thread(self.show_preview, path, page, count, image, meta)
+        if page + 1 < count and not worker.is_cancelled:  # warm the next flip
+            try:
+                with PDFIUM_LOCK:
+                    if self.doc and self.doc[:2] == (path, mtime):
+                        self.render_cached(self.doc[2], path, mtime, page + 1)
+            except pdfium.PdfiumError:
+                pass
+
+    def on_unmount(self) -> None:
+        with PDFIUM_LOCK:
+            self.close_doc()
 
     def show_preview(self, path: Path, page: int, count: int, image, meta: dict) -> None:
         if path != self.current:
@@ -830,6 +875,8 @@ class PowerPDF(App):
         self.recent = [p for p in map(fix, self.recent) if p]
         if self.current and self.current.is_relative_to(old):
             self.current = None
+            with PDFIUM_LOCK:
+                self.close_doc()
         self.save_settings(recent=[str(p) for p in self.recent])
         self.refresh_queue()
         self.refresh_recent()
