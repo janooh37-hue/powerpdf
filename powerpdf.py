@@ -22,6 +22,7 @@ from send2trash import send2trash
 
 # textual_image probes the terminal (sixel / kitty graphics / half-blocks) on import,
 # so it must be imported before the app starts.
+from textual_image.renderable import Image as AutoRenderable, TGPImage as TGPRenderable
 from textual_image.widget import HalfcellImage, Image as SharpImage
 from textual_image._terminal import get_cell_size
 from textual import events, on, work
@@ -44,6 +45,13 @@ RECENT_MAX = 30
 BAD_NAME_CHARS = set('\\/:*?"<>|')
 PDFIUM_LOCK = threading.Lock()  # pdfium is not thread-safe
 CELL_W, CELL_H = 24, 14  # one page cell of the Pages grid, in terminal cells
+
+
+def sharp_preview_works(env=os.environ, renderable=AutoRenderable) -> bool:
+    """False under Herdr when textual_image picked Kitty graphics: Herdr answers the Kitty query itself but only draws
+    images in a Kitty-capable outer terminal (not Windows Terminal), so the sharp preview would be blank."""
+    return not (renderable is TGPRenderable and env.get("HERDR_ENV") == "1")
+
 
 THEMES = [
     Theme(
@@ -875,7 +883,7 @@ class PowerPDF(App):
         self.page_count = 0
         self.doc: tuple[Path, int, pdfium.PdfDocument] | None = None  # open preview PDF; guarded by PDFIUM_LOCK
         self.page_cache: OrderedDict = OrderedDict()  # (path, mtime_ns, page, scale) -> image, 16 newest; guarded by PDFIUM_LOCK
-        self.pixel_mode = False
+        self.pixel_mode = not sharp_preview_works()
         try:
             self.settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -893,7 +901,7 @@ class PowerPDF(App):
             with Vertical(id="preview", classes="panel") as preview:
                 preview.border_title = "Preview"
                 yield Static(logo(), id="empty")
-                yield SharpImage(id="page")
+                yield (HalfcellImage if self.pixel_mode else SharpImage)(id="page")
             with Vertical(id="side"):
                 info = Static("[$foreground-muted]Highlight a file to see its details.[/]", id="info", classes="panel")
                 info.border_title = "Info"
@@ -1088,12 +1096,15 @@ class PowerPDF(App):
         page_widget = self.query_one("#page")
         page_widget.display = True
         page_widget.image = image
-        self.query_one("#preview").border_subtitle = f"page {page + 1}/{count} · [ ] flip"
+        self.query_one("#preview").border_subtitle = self.preview_subtitle(page, count)
         stat = path.stat()
         rows = [("pages", count), ("size", human_size(stat.st_size)),
                 ("modified", datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"))]
         rows += [(key.lower(), meta[key]) for key in ("Title", "Author", "Producer") if key in meta]
         self.show_info(path, details(rows))
+
+    def preview_subtitle(self, page: int, count: int) -> str:
+        return f"page {page + 1}/{count} · [ ] flip" + (" · pixels (v)" if self.pixel_mode else "")
 
     def show_info(self, path: Path, body: str) -> None:
         self.query_one("#info", Static).update(f"[b $accent]{escape(path.name)}[/]\n\n{body}")
@@ -1105,7 +1116,15 @@ class PowerPDF(App):
         new.display = old.display
         await old.remove()
         await self.query_one("#preview").mount(new)
-        self.notify("Pixel mode on" if self.pixel_mode else "Sharp mode on", timeout=2)
+        preview = self.query_one("#preview")
+        if preview.border_subtitle:  # a page is shown
+            preview.border_subtitle = self.preview_subtitle(self.page, self.page_count)
+        if self.pixel_mode:
+            self.notify("Pixel mode on", timeout=2)
+        elif not sharp_preview_works():
+            self.notify("Sharp mode on: Herdr can't draw it in Windows Terminal, press v for pixels", timeout=4)
+        else:
+            self.notify("Sharp mode on", timeout=2)
 
     # ── explore ──────────────────────────────────────────────────────────────
 

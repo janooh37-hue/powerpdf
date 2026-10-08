@@ -14,6 +14,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from textual import events
 from textual.widgets import Input, Label, RichLog
+from textual_image.renderable import SixelImage, TGPImage
 
 import pdf_card
 import powerpdf
@@ -233,6 +234,14 @@ def test_preview_pages(tmp_path):
         assert type(app.query_one("#page")).__name__ == "HalfcellImage"
 
     run(tmp_path, scenario)
+
+
+def test_sharp_preview_is_skipped_only_for_kitty_graphics_under_herdr():
+    herdr = {"HERDR_ENV": "1"}
+    assert not powerpdf.sharp_preview_works(herdr, TGPImage)
+    assert powerpdf.sharp_preview_works(herdr, SixelImage)
+    assert powerpdf.sharp_preview_works({}, TGPImage)
+    assert powerpdf.sharp_preview_works({"HERDR_ENV": "0"}, TGPImage)
 
 
 def test_preview_render_ignores_panel_size(tmp_path):

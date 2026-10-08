@@ -14,7 +14,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**18 passed**, `uv run --frozen pytest -q`, 40–75 s) |
+| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**19 passed**, `uv run --frozen pytest -q`, 40–75 s) |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–20 | `pdfSplit`, `pdfMerge`, `pdfCompress` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command: `uv tool install --editable C:\Users\GSSG\projects\powerpdf` (env in `%APPDATA%\uv\tools\powerpdf`). Editable, so code edits apply at once, but `uv tool` **ignores `uv.lock`**: it resolves its own (newer) libs, e.g. opencv-headless 5.0, pypdf 6.19 vs the venv's. If the repo moves, rerun with `--force` |
 | `C:\Users\GSSG\Scripts\` | Old CLI copies **retired** (moved to the Recycle Bin 2026-10-07). Only `__pycache__` is left |
@@ -51,7 +51,7 @@ New in 0.5.0:
   (`ara`, `eng`, `osd`; not on PATH), ImageMagick (`magick`), `pdftotext` (from Git). Not installed: qpdf, mutool, pdfimages, pngquant, jbig2, unpaper.
 - No `.pdf` file association, so printing goes through Ghostscript.
 - Printers: **`SHARP BP-50C31 PCL6` (default, real paper)**, `Microsoft Print to PDF`, `OneNote (Desktop)`. 12 logical CPUs.
-- The app runs inside Herdr panes fine; `herdr pane send-keys` drives it for real-TUI smoke tests.
+- The app runs inside Herdr panes fine; `herdr pane send-keys` drives it for real-TUI smoke tests. Under Herdr the preview starts in **pixel mode** (see gotchas).
 
 ## Gotchas (each one has bitten already)
 
@@ -69,6 +69,10 @@ New in 0.5.0:
 - The preview LRU holds 16 renders; opening the page grid on a long PDF flushes it (the main preview re-renders on demand).
 - `import powerpdf` still loads numpy and PIL because `textual_image` (sixel) needs them; cv2/pypdf are deferred.
 - **Preview resolution must not follow the panel size.** Sizing the render from the panel's current cells (tried in 0.5.0) gave a tiny, blurry page whenever the panel wasn't laid out yet (splash on top, window resized or font zoomed later), and the cache kept it. `textual_image` already resizes to the widget with Pillow; just hand it ≤1.5× / ≤1600 px. Windows Terminal doesn't answer the cell-size query, so textual_image assumes 10×20 px cells.
+- **Herdr can't show sharp images in Windows Terminal.** In a Herdr pane textual_image probes `sixel=False, tgp=True`: Herdr answers the Kitty graphics query itself but only re-draws Kitty images when the *outer* terminal speaks Kitty graphics (`terminal.kitty_graphics`, default on); Windows Terminal doesn't, and Herdr has no Sixel passthrough (forced Sixel never reaches the Herdr client). So `sharp_preview_works()` (`HERDR_ENV=1` + TGP renderable) starts the app in pixel mode, the subtitle says `pixels (v)`, and `v` to sharp warns it will be blank. Plain Windows Terminal probes `sixel=True` and starts sharp. Herdr inside a Kitty-graphics outer terminal would draw sharp, but still starts in pixel mode (press `v`).
+- **Pixel mode** (`v`, `HalfcellImage`) = one `▀` per cell, so 1×2 truecolor pixels per cell: the page layout and colours, never readable small print. It's the fallback for terminals without image support.
+- **Agent shells leak `NO_COLOR=1` and `TERM=dumb`** into anything they launch (`wt.exe`, `herdr --session`). Textual then draws monochrome and pixel mode looks grey. That, not the app, was the "grey in WT" seen before. Clear them in test windows (`cmd /c "set NO_COLOR=&& set TERM=&& set HERDR_ENV=&& …"`; in a Herdr test pane run `$env:NO_COLOR=$null` first). `wt.exe` also inherits `HERDR_ENV=1` from a Herdr pane.
+- `test_preview_pages` presses `v` and expects `HalfcellImage`; it assumes the app starts sharp. Under pytest's output capture there's no TTY, so that holds; `pytest -s` inside a Herdr pane would start in pixel mode and fail.
 
 ## Reference files (read-only; never modify originals in Downloads)
 
@@ -123,6 +127,10 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 - CLI: run in a `$env:TEMP` copy folder with real scans, including an Arabic-named file. Check exit codes 0/1/2.
 - Look at outputs: `PdfReader(f).pages[0].images[0].image.save(...)` and view it. Readability of the license card is the acceptance bar.
-- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (18 tests, end-to-end through Textual's pilot).
+- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (19 tests, end-to-end through Textual's pilot).
 - Real TUI: in Herdr, split a pane, `pane run` the app in a temp copy folder, `pane send-keys` keys, `pane read --source visible`.
-  Herdr panes don't draw sharp (Sixel) images, so judge preview quality in a plain Windows Terminal window (`wt.exe -w new`) plus a desktop screenshot.
+  Text reads never show images: judge previews by a picture of the window. Don't take over the user's own Herdr view; start an isolated
+  session in its own window (`wt.exe -w new --maximized -d <dir> cmd /c "set HERDR_ENV=&& set HERDR_PANE_ID=&& set HERDR_SOCKET_PATH=&& herdr --session <name>"`,
+  then `herdr --session <name> pane run w1:p1 …`) and capture just that window with `PrintWindow(hwnd, hdc, 2)` (works while it's behind other
+  windows; `CopyFromScreen` shows whatever is in front, or the lock screen). Check plain Windows Terminal too, with a clean env (see gotchas).
+  Stop the test session (`herdr session stop <name>`) and close the windows afterwards.
