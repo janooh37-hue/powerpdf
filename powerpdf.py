@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PowerPDF: a pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact and compare PDFs."""
+"""PowerPDF: a pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact, compare and save PDFs as images."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
 RECENT_MAX = 30
 BAD_NAME_CHARS = set('\\/:*?"<>|')
@@ -853,6 +853,7 @@ class PowerPDF(App):
         Binding("p", "print", "Print"),
         Binding("k", "card", "Card"),
         Binding("c", "compress", "Compress"),
+        Binding("i", "image", "Image"),
         Binding("d", "compare", "Compare"),
         Binding("t", "pages", "Pages"),
         Binding("r", "toggle_recent", "Recent"),
@@ -957,6 +958,7 @@ class PowerPDF(App):
             ("Compare", "Show the highlighted PDF and its _small copy side by side", self.action_compare),
             ("Pages", "Thumbnail grid of the highlighted PDF: rotate, delete, reorder, extract pages", self.action_pages),
             ("Compress", "Small, readable copies (<name>_small.pdf) to upload or send", self.action_compress),
+            ("Save as images", "Every page of queued (or highlighted) PDFs as JPG or PNG", self.action_image),
             ("Queue folder", "Queue every PDF in the highlighted folder", self.action_queue_folder),
             ("Clear queue", "Empty the queue", self.action_clear_queue),
             ("Toggle pixel mode", "Switch preview between sharp and half-block pixels", self.action_toggle_pixels),
@@ -1434,6 +1436,40 @@ class PowerPDF(App):
         self.call_from_thread(self.remember, *done)
         self.call_from_thread(self.query_one(FileTree).reload)
 
+    def action_image(self) -> None:
+        if not (targets := self.targets()):
+            self.notify("Highlight or queue a PDF to save as images.", severity="warning")
+            return
+        choices = [Option(label, id=choice) for choice, label in [
+            ("jpg-150", "JPG 150 dpi   small, for uploads (recommended)"),
+            ("png-150", "PNG 150 dpi   lossless text; scans ~5x larger"),
+            ("jpg-300", "JPG 300 dpi   print quality"),
+            ("png-300", "PNG 300 dpi   lossless print quality, largest"),
+        ]]
+        self.push_screen(
+            ChoiceDialog(f"Save {len(targets)} PDF{'s' * (len(targets) > 1)} as images (one per page)", choices),
+            lambda choice: choice and self.image_files(targets, *choice.split("-")),
+        )
+
+    @work(thread=True, group="jobs")
+    def image_files(self, targets: list[Path], fmt: str, dpi: str) -> None:
+        from pdf_image import to_images
+        done = []
+        for pdf in targets:
+            try:
+                outputs = to_images(pdf, fmt, int(dpi), PDFIUM_LOCK)
+            except Exception as error:  # pdfium/IO failure: report and continue, like pdfImage
+                self.call_from_thread(self.say, f"✗ {pdf.name}: {error}", "error")
+                continue
+            size = human_size(sum(o.stat().st_size for o in outputs))
+            where = outputs[0].name if len(outputs) == 1 else f"{outputs[0].parent.name}/ ({len(outputs)} pages)"
+            self.call_from_thread(self.say, f"✓ {pdf.name} → {where}, {size}", "success")
+            done.append(pdf)
+        self.call_from_thread(self.notify, f"Saved images of {len(done)}/{len(targets)} PDFs",
+                              severity="information" if len(done) == len(targets) else "error")
+        self.call_from_thread(self.remember, *done)
+        self.call_from_thread(self.query_one(FileTree).reload)
+
     @work(thread=True, group="jobs")
     def print_files(self, targets: list[Path], printer: str) -> None:
         done = []
@@ -1497,7 +1533,7 @@ class PowerPDF(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="powerpdf", description="Explore, preview, merge, split, print, compress, card, pages, redact and compare PDFs.")
+    parser = argparse.ArgumentParser(prog="powerpdf", description="Explore, preview, merge, split, print, compress, card, pages, redact and compare PDFs, and save them as images.")
     parser.add_argument("folder", nargs="?", default=".", help="folder to open (default: current folder)")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     args = parser.parse_args()

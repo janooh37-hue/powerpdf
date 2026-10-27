@@ -1,24 +1,23 @@
 # PowerPDF — handoff
 
-Date: 2026-10-07. Owner: GSSG (Windows 11, PowerShell 7). Version **0.5.0**.
+Date: 2026-10-27. Owner: GSSG (Windows 11, PowerShell 7). Version **0.6.0**.
 
 ## Goal
 
 A personal PDF toolkit for Windows. The main job: take scanned licenses, ID cards and certificates and make
 **small, readable, card-only** copies for web-app uploads and sending to people. It should feel premium.
 
-`PLAN.md` (all four tiers + folder rename + single source of truth) is **done**; one git commit per item, no remote.
+`PLAN.md` (all four tiers + folder rename + single source of truth) is **done**; one git commit per item. Branch `main`, pushed to the
+private GitHub repo `janooh37-hue/powerpdf` (`origin`, account `janooh37-hue`, `gh` auth over https).
 The open backlog is at the bottom. **Don't build from it until the user picks by number.**
 
 ## Where the code lives (one copy)
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.5.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**19 passed**, `uv run --frozen pytest -q`, 40–75 s) |
-| `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–20 | `pdfSplit`, `pdfMerge`, `pdfCompress` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
-| `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command: `uv tool install --editable C:\Users\GSSG\projects\powerpdf` (env in `%APPDATA%\uv\tools\powerpdf`). Editable, so code edits apply at once, but `uv tool` **ignores `uv.lock`**: it resolves its own (newer) libs, e.g. opencv-headless 5.0, pypdf 6.19 vs the venv's. If the repo moves, rerun with `--force` |
-| `C:\Users\GSSG\Scripts\` | Old CLI copies **retired** (moved to the Recycle Bin 2026-10-07). Only `__pycache__` is left |
-| `C:\Users\GSSG\projects\powerdpf\` (typo) | Leftover old `.venv` only, waiting to be recycled by the setup agent once the terminal using it closes. Not code |
+| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**20 passed**, `uv run --frozen pytest -q`, 40–110 s) |
+| `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
+| `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 
 ## Shell commands (all have `-h` with flags and examples)
 
@@ -28,12 +27,13 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 | `pdfMerge [paths] [-o out.pdf] [-f]` | `pdf_merge.py` (pypdf `writer.append`) | Merges in argument order; folders sorted by name. Default `merged.pdf`; needs ≥2 PDFs; never merges the output into itself. Existing output without `-f` → argparse error, **exit 2** |
 | `pdfPrint [paths] [-p] [-h]` | `pdf_print.ps1` | Named files print directly. No args or a folder: fzf multi-select (Tab mark, Ctrl-A all). `-p` picks the printer in fzf. Ghostscript `-sDEVICE=mswinpr2`, one job per file. A nonexistent path throws "Cannot find path" (line 42) |
 | `pdfCompress [paths] [-q screen\|ebook\|printer] [-c]` | `pdf_compress.py` | Writes `<name>_small.pdf` next to each original; skips `*_small.pdf`. Plain: Ghostscript `pdfwrite /<q>`, original shipped if not smaller. `-c`: render, crop to content, JPEG q80 `optimize=True` via Pillow. **Every output is stripped of `/Info` and XMP** (no Title, Producer, dates) |
+| `pdfImage [paths] [-f jpg\|png] [-r dpi]` | `pdf_image.py` (pypdfium2 + Pillow) | Every page as an image, 150 dpi default (50–600). One page → `<name>_image.jpg` next to the PDF; more → `<name>_images\<name>_page_001.jpg…`, staged in a temp folder, then swapped in; that format's old pages are removed, the other format is kept. JPG q80 `optimize=True`; no EXIF or PNG text chunks. Pages larger than A4 render as A4 (same rule as `-c`), so phone scans don't make 3900×5500 px images |
 
 Exit codes: 0 success, 1 nothing to do or failure, 2 argparse usage errors.
 
 ## App keys (`powerpdf [folder]`)
 
-Main: `space` queue · `o` open · `m` merge · `s` split · `p` print · `k` card · `c` compress · **`d` compare** ·
+Main: `space` queue · `o` open · `m` merge · `s` split · `p` print · `k` card · `c` compress · **`i` images** · **`d` compare** ·
 **`t` pages** · `r` recent · `?` keys · `q` quit · `[ ]` flip preview · `v` pixel mode · `g` go to folder · `e` Explorer ·
 `F2` rename · `Del` Recycle Bin · `a` queue folder · `x` clear queue · `f` all files · `ctrl+r` refresh · `ctrl+t` theme.
 
@@ -43,9 +43,12 @@ New in 0.5.0:
 - **`t` Pages:** thumbnail grid. `space` select · `r` rotate 90° · `Del` delete · `shift+←/→` reorder · `x` extract to `<stem>_extract.pdf` · `Enter` save `<stem>_edited.pdf` · `Esc` close (asks if unsaved). Keys act on the selection, or the cursor page if none. Original is never changed.
 - **Card screen (`k`):** `Enter` saves `<stem>_card.pdf` = **the cards only**, 2 card-sized pages (front, back), 150 dpi, q80, no metadata. **`j`** saves `<stem>_front.jpg` / `<stem>_back.jpg` (150 dpi, q80, no EXIF; confirms before overwriting). **`b`** adds a black box on the current side; `space` steps crop → box 1 → … → crop; arrows / `shift`+arrows move/resize the selected box (or the crop); `backspace` removes the selected box; `tab` switches side. Boxes are painted into the pixels, grown to 8-px JPEG blocks and saved 4:4:4 so they decode to exactly (0,0,0).
 
+New in 0.6.0:
+- **`i` Images:** queued (or highlighted) PDFs → one image per page, same layout as `pdfImage`. Choices: JPG 150 (default), PNG 150, JPG 300, PNG 300. The log shows each output and its total size. pdfium renders under `PDFIUM_LOCK` one page at a time; encoding runs outside the lock, so the preview stays responsive.
+
 ## Environment (verified)
 
-- Python 3.14.8 (global): pypdf 6.17, pypdfium2 5.9, Pillow 12.2, numpy 2.4.6, opencv-python 4.13. The app venv has its own (Pillow 12.3, numpy 2.5.3, opencv-python-headless).
+- Python 3.14.8 (global): pypdf 6.17, pypdfium2 5.9, Pillow 12.2, numpy 2.4.6, opencv-python 4.13. The app venv and the uv tool env have their own, the same versions as `uv.lock` (Pillow 13.0.0, numpy 2.5.4, pypdf 6.21.2, opencv-python-headless 5.0.0.93).
   Not installed: pikepdf, pymupdf, ocrmypdf, pytesseract, reportlab, pdfplumber, img2pdf.
 - Ghostscript 10.08 (`gswin64c`, `mswinpr2` device), fzf 0.74.4, Tesseract 5.4 at `C:\Program Files\Tesseract-OCR\`
   (`ara`, `eng`, `osd`; not on PATH), ImageMagick (`magick`), `pdftotext` (from Git). Not installed: qpdf, mutool, pdfimages, pngquant, jbig2, unpaper.
@@ -93,6 +96,7 @@ New in 0.5.0:
 | Certificate plain `ebook` / `-c ebook` | 396 / 257 KB, iOS Producer + dates | 395 / 250 KB, no metadata |
 | License plain `ebook` | 232 KB (original shipped) | 232 KB (original, metadata stripped) |
 | Page grid, 50-page scan | — | all thumbnails 1.3–1.8 s; key latency median 2 ms while rendering |
+| `pdfImage`, 150 dpi, JPG / PNG | — | scan page 249 KB / 1,350 KB (PNG ~5×); vector form 130 / 132 KB; 1241×1754 px per A4 page; fake phone scan (26×37″ page) 1241×1755 instead of 3900×5514 |
 
 Older numbers still valid: `-c screen` 57 KB (unreadable); one card at JPEG q85/q70/q60 = 47/32/27 KB;
 OpenCV finds the license cards at 86×54 / 85×54 mm, tilted ~0.8° / ~2.3°; Tesseract on cards is garbage.
@@ -117,7 +121,7 @@ OpenCV finds the license cards at 86×54 / 85×54 mm, tilted ~0.8° / ~2.3°; Te
 28. Phone photo to clean PDF: crop and straighten with the existing `pdf_card` code; the implementation of #11.
 29. Copy a PDF's text to the clipboard (pypdfium2).
 
-Done in 0.5.0: 1, 2, 4, 6, 16 (deferred imports), 17 (1600 px preview cap), 18 (preview cache), 19 (drag and drop),
+Done in 0.6.0: PDF pages to JPG / PNG (`pdfImage`, `i`). Done in 0.5.0: 1, 2, 4, 6, 16 (deferred imports), 17 (1600 px preview cap), 18 (preview cache), 19 (drag and drop),
 21 (compare), 24 (page grid), 25 (redact), 30 (folder rename), CLI single source of truth.
 
 Rejected, with reasons: linearization (needs qpdf/pikepdf, no gain at ~100 KB), grayscale (~12% smaller, loses colour),

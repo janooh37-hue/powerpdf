@@ -142,6 +142,36 @@ def test_split_writes_pages_and_survives_a_broken_pdf(tmp_path):
     run(tmp_path, scenario)
 
 
+def test_images_one_per_page_capped_at_a4_and_rerun_drops_stale_pages(tmp_path):
+    make_pdf(tmp_path / "a.pdf", pages=3, size=595)
+    make_pdf(tmp_path / "phone.pdf", size=2647)  # phone scans claim ~37 inch pages
+    (tmp_path / "broken.pdf").write_text("not a pdf")
+
+    async def scenario(app, pilot):
+        await pilot.press("a", "i", "enter")  # queue all, JPG 150 dpi
+        await settle(app, pilot)
+        assert sorted(p.name for p in (tmp_path / "a_images").iterdir()) == [
+            "a_page_001.jpg", "a_page_002.jpg", "a_page_003.jpg",
+        ]
+        with Image.open(tmp_path / "a_images" / "a_page_001.jpg") as image:
+            assert image.size == (1240, 1240)  # 595 pt at 150 dpi
+        with Image.open(tmp_path / "phone_image.jpg") as image:
+            assert max(image.size) <= 1755  # rendered as A4 at 150 dpi, not 5514 px
+        assert any(line.startswith("✗ broken.pdf") for line in log_lines(app))
+
+        make_pdf(tmp_path / "a.pdf", pages=2, size=595)
+        await pilot.press("i", "down", "enter")  # PNG next to the JPGs
+        await settle(app, pilot)
+        await pilot.press("i", "enter")
+        await settle(app, pilot)
+        assert sorted(p.name for p in (tmp_path / "a_images").iterdir()) == [
+            "a_page_001.jpg", "a_page_001.png", "a_page_002.jpg", "a_page_002.png",
+        ]
+
+    run(tmp_path, scenario)
+
+
+
 def test_queue_reorder_and_remove(tmp_path):
     for name in "abc":
         make_pdf(tmp_path / f"{name}.pdf")
