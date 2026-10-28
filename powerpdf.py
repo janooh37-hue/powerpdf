@@ -163,6 +163,20 @@ def output_checks(inputs: list[Path]) -> tuple[Callable[[str], str | None], Call
     return check, exists
 
 
+def card_file_name(value: str) -> str:
+    """A card name made safe as a file name: / \\ : become - (16/16402 → 16-16402), other characters Windows forbids go,
+    spaces collapse, and no leading or trailing dots or spaces (Explorer can't handle those)."""
+    value = value.translate(str.maketrans({"/": "-", "\\": "-", ":": "-"}))
+    value = "".join(ch for ch in value if ch not in BAD_NAME_CHARS and ch >= " ")
+    return " ".join(value.split()).strip(" .")
+
+
+def card_label(name: str) -> str:
+    """The words after a card name's number: "Station" in "16-16402 Station". Empty when the name doesn't start with a number."""
+    number, _, label = name.partition(" ")
+    return label if any(ch.isdigit() for ch in number) else ""
+
+
 class FileTree(DirectoryTree):
     """Folders and PDFs (every file with show_all); other files are dimmed, queued PDFs get a dot."""
 
@@ -386,10 +400,49 @@ class ChoiceDialog(ModalScreen[str | None]):
         self.dismiss(event.option.id)
 
 
+class NameDialog(ModalScreen[str | None]):
+    """A card's name for its files. Enter keeps what's typed, made file-safe (16/16402 → 16-16402); empty clears it.
+    Tab reaches the picks: what OCR read off the card (replaces the number) and labels used before (go after the number)."""
+
+    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, title: str, value: str, read: str | None, labels: list[str]) -> None:
+        super().__init__()
+        self.title_text, self.value, self.read, self.labels = title, value, read, labels
+
+    def compose(self) -> ComposeResult:
+        picks = [Option(f"{escape(self.read)}  [$foreground-muted]read off the card: check it[/]", id="read")] if self.read else []
+        picks += [Option(f"… {escape(label)}", id=f"label:{label}") for label in self.labels]
+        with Vertical(classes="dialog") as dialog:
+            dialog.border_title = self.title_text
+            yield Input(self.value, placeholder="plate or number, then a word: 16-16402 Station")
+            if picks:
+                yield OptionList(*picks)
+            tab = " · Tab picks" if picks else ""
+            yield Label(f"[$foreground-muted]Enter save{tab} · empty = no name · Esc cancel[/]", id="hint")
+
+    @on(Input.Submitted)
+    def submit(self, event: Input.Submitted) -> None:
+        self.dismiss(card_file_name(event.value))
+
+    @on(OptionList.OptionSelected)
+    def pick(self, event: OptionList.OptionSelected) -> None:
+        field = self.query_one(Input)
+        value = field.value.strip()
+        if event.option.id == "read":
+            field.value = f"{self.read} {card_label(value)}".strip()
+        else:  # the label goes after the number, replacing the old one; a name without a number keeps all its words
+            base = value.partition(" ")[0] if card_label(value) else value
+            field.value = f"{base} {event.option.id.removeprefix('label:')}".strip()
+        field.focus()
+        field.cursor_position = len(field.value)
+
+
 class CardScreen(ModalScreen):
     """Every card found in the scans, one at a time: front and back side by side, next to the scan page with each card outlined.
-    Nudge a crop, black out private details, swap front and back, skip a card, then save. One card: a 2-page PDF or two JPGs.
-    Many: a folder with a PDF (or front and back JPGs) per card, or one PDF with them all.
+    Nudge a crop, black out private details, swap front and back, skip a card, name it, then save. One card: a 2-page PDF or two JPGs.
+    Many: a folder with a PDF (or front and back JPGs) per card, or one PDF with them all. Named cards save under their names.
+    Names are suggested in the background (OCR of plates and Emirates ID numbers) but only used once confirmed with n.
     Arrows, shift+arrows move/resize the selected black box, or the crop when none is selected; b adds a box (selected), space steps crop → box → … → crop."""
 
     BATCH = {"step", "skip", "save_one"}  # actions that need more than one card; hidden otherwise
@@ -403,6 +456,7 @@ class CardScreen(ModalScreen):
         Binding("tab", "switch", "Front/Back"),
         Binding("s", "swap", "Swap"),
         Binding("x", "skip", "Skip"),
+        Binding("n", "name", "Name"),
         Binding("b", "add_box", "Black box"),
         Binding("space", "cycle", "Crop/Box"),
         Binding("backspace", "remove_box", "Remove box"),
@@ -432,6 +486,9 @@ class CardScreen(ModalScreen):
         self.thumbs: dict[int, tuple] = {}  # id(page) -> (small RGB image of the page, its scale)
         self.saving = False
         self.map_timer = None  # pending map redraw after arrow nudges
+        self.names: list[str | None] = [None] * len(cards)  # confirmed with n: the files' names
+        self.suggested: list[tuple[str, int] | None] = [None] * len(cards)  # OCR: (name, side it was read on, as first found)
+        self.swapped = [False] * len(cards)  # s pressed an odd number of times: suggested sides are flipped
 
     @property
     def card(self):
@@ -467,6 +524,31 @@ class CardScreen(ModalScreen):
     def on_mount(self) -> None:
         self.query_one("#side0").add_class("-active")
         self.show_card()
+        self.read_names([(card.pages[:], card.rects[:]) for card in self.cards])
+
+    @work(thread=True, group="card-names")
+    def read_names(self, cards: list[tuple[list, list]]) -> None:
+        """OCR name suggestions for every card, four at a time (about 2 s a card), shown as they arrive.
+        Works from a copy of the cards as found; swaps made meanwhile are tracked in self.swapped."""
+        import pdf_card
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        worker = get_current_worker()
+
+        def read(pages: list, rects: list):
+            return None if worker.is_cancelled else pdf_card.suggest_name([pdf_card.cut(p, r) for p, r in zip(pages, rects)])
+
+        with ThreadPoolExecutor(4) as pool:
+            futures = {pool.submit(read, pages, rects): k for k, (pages, rects) in enumerate(cards)}
+            for future in as_completed(futures):
+                if worker.is_cancelled:
+                    return
+                if found := future.result():
+                    self.app.call_from_thread(self.suggest, futures[future], found)
+
+    def suggest(self, k: int, found: tuple[str, int]) -> None:
+        if self.is_attached:
+            self.suggested[k] = found
+            self.show_strip()
 
     def show_card(self) -> None:
         for i in range(2):
@@ -532,29 +614,43 @@ class CardScreen(ModalScreen):
         self.query_one("#map").border_subtitle = self.card.where
 
     def show_strip(self) -> None:
-        """Which card, a chip per card (current, skipped, ⚠ a side not found), and what Enter saves."""
+        """Which card and its name, a chip per card (current, skipped, ✓ named, ? a name to confirm, ⚠ a side not found), and what Enter saves."""
         count, kept = len(self.cards), len(self.cards) - len(self.skipped)
         if count == 1:
-            text = f"[b]{escape(self.card.where)}[/]"
+            text = f"[b]{escape(self.card.where)}[/] · {self.name_note()}"
         else:
             first = max(0, min(self.index - 12, count - 25))  # a window of 25 chips around the current card
             last = min(count, first + 25)
             chips = []
             for k in range(first, last):
-                warn = any(self.cards[k].guessed)
+                warn, named = any(self.cards[k].guessed), self.names[k] is not None
                 style = ("b reverse $primary" if k == self.index else "strike $foreground-muted" if k in self.skipped
-                         else "$warning" if warn else "$foreground")
-                chips.append(f"[{style}] {k + 1}{'⚠' if warn else ''} [/]")
+                         else "$warning" if warn else "$success" if named else "$foreground")
+                mark = "⚠" if warn else "✓" if named else "?" if self.suggested[k] else ""
+                chips.append(f"[{style}] {k + 1}{mark} [/]")
             more = "[$foreground-muted]…[/]"
-            text = (f"[b]Card {self.index + 1} of {count}[/] [$foreground-muted]· {escape(self.card.where)}[/]  "
+            text = (f"[b]Card {self.index + 1} of {count}[/] [$foreground-muted]· {escape(self.card.where)} ·[/] {self.name_note()}  "
                     f"{more if first else ''}{''.join(chips)}{more if last < count else ''}")
         notes = []
         if unsure := sum(any(card.guessed) for card in self.cards):
             notes.append(f"[$warning]⚠ {unsure} to check[/]")
         if self.skipped:
             notes.append(f"[$error]{len(self.skipped)} skipped[/]")
+        if count > 1 and (named := sum(name is not None for name in self.names)):
+            notes.append(f"[$success]{named} named[/]")
         notes.append(f"[$success]Enter saves {kept} cards[/]" if count > 1 else "[$success]Enter saves front + back[/]")
         self.query_one("#strip", Static).update(f"{text}   {' · '.join(notes)}")
+
+    def name_note(self) -> str:
+        """The current card's name: confirmed, read by OCR (and the side it was read on), or how to give one."""
+        k = self.index
+        if name := self.names[k]:
+            return f"[b $success]{escape(name)}[/]"
+        if found := self.suggested[k]:
+            name, side = found
+            swapped = " [$warning]read on the Back: s swaps?[/]" if side != self.swapped[k] else ""
+            return f"[$warning]{escape(name)}?[/] [$foreground-muted]n confirms[/]{swapped}"
+        return "[$foreground-muted]n names it[/]"
 
     def action_step(self, step: int) -> None:
         index = min(max(self.index + step, 0), len(self.cards) - 1)
@@ -565,8 +661,26 @@ class CardScreen(ModalScreen):
     def action_swap(self) -> None:
         self.card.swap()
         self.boxes.reverse()
+        self.swapped[self.index] = not self.swapped[self.index]
         self.active = None
         self.show_card()
+
+    def action_name(self) -> None:
+        k, found = self.index, self.suggested[self.index]
+        value = self.names[k] or (found[0] if found else "")
+        labels = self.app.settings.get("card_labels", [])
+        self.app.push_screen(NameDialog(f"Name card {k + 1}", value, found and found[0], labels), lambda name: self.named(k, name))
+
+    def named(self, k: int, name: str | None) -> None:
+        """The dialog's answer for card k: a name, "" to clear it, None if cancelled. A label after the number is
+        remembered (newest first, 12 kept) and offered for the next cards."""
+        if name is None:
+            return
+        self.names[k] = name or None
+        if label := card_label(name):
+            labels = [label] + [old for old in self.app.settings.get("card_labels", []) if old != label]
+            self.app.save_settings(card_labels=labels[:12])
+        self.show_strip()
 
     def action_skip(self) -> None:
         self.skipped ^= {self.index}
@@ -630,7 +744,7 @@ class CardScreen(ModalScreen):
         if len(self.cards) > 1:
             self.ask_folder("pdf")
             return
-        default = self.sources[0].with_name(f"{self.sources[0].stem}_card.pdf")
+        default = self.sources[0].with_name(f"{self.names[0] or self.sources[0].stem + '_card'}.pdf")
         self.app.push_screen(
             PromptDialog("Save front + back as", str(default), *output_checks(self.sources)),
             lambda value: value and self.save(Path(value).expanduser().resolve()),
@@ -640,7 +754,7 @@ class CardScreen(ModalScreen):
         if len(self.cards) > 1:
             self.ask_folder("jpg")
             return
-        outputs = [self.sources[0].with_name(f"{self.sources[0].stem}_{side}.jpg") for side in ("front", "back")]
+        outputs = [self.sources[0].with_name(f"{self.names[0] or self.sources[0].stem}_{side}.jpg") for side in ("front", "back")]
         if existing := [o.name for o in outputs if o.exists()]:
             self.app.push_screen(
                 ConfirmDialog(f"Overwrite [b]{escape(' and '.join(existing))}[/]?"),
@@ -661,11 +775,21 @@ class CardScreen(ModalScreen):
         self.app.pop_screen()
         self.app.saved_card(*outputs)
 
-    def batch_paths(self, folder: Path, kind: str) -> list[list[Path]]:
-        """Per kept card, numbered as in the strip: <stem>_card_01.pdf, or <stem>_card_01_front.jpg and _back.jpg."""
+    def file_stems(self) -> dict[int, str]:
+        """Per kept card, its file name without extension: its name, else <stem>_card_01 (numbered as in the strip).
+        A name given twice gets " (2)", " (3)", … in card order, so no card overwrites another."""
         stem, width = self.sources[0].stem, max(2, len(str(len(self.cards))))
+        stems, seen = {}, {}
+        for k in self.kept():
+            base = self.names[k] or f"{stem}_card_{k + 1:0{width}d}"
+            seen[base.lower()] = count = seen.get(base.lower(), 0) + 1
+            stems[k] = base if count == 1 else f"{base} ({count})"
+        return stems
+
+    def batch_paths(self, folder: Path, kind: str) -> list[list[Path]]:
+        """Per kept card: <name>.pdf, or <name>_front.jpg and _back.jpg (see file_stems)."""
         suffixes = [".pdf"] if kind == "pdf" else ["_front.jpg", "_back.jpg"]
-        return [[folder / f"{stem}_card_{k + 1:0{width}d}{suffix}" for suffix in suffixes] for k in self.kept()]
+        return [[folder / f"{stem}{suffix}" for suffix in suffixes] for stem in self.file_stems().values()]
 
     def ask_folder(self, kind: str) -> None:
         if not self.ready():
@@ -690,24 +814,25 @@ class CardScreen(ModalScreen):
         default = self.sources[0].with_name(f"{self.sources[0].stem}_cards.pdf")
         self.app.push_screen(
             PromptDialog(f"Save {len(self.kept())} cards in one PDF (front, back, front, …)", str(default), *output_checks(self.sources)),
-            lambda value: value and self.start_save([[Path(value).expanduser().resolve()]], None),
+            lambda value: value and self.start_save([[Path(value).expanduser().resolve()]], None, list(self.file_stems().values())),
         )
 
-    def start_save(self, paths: list[list[Path]], folder: Path | None) -> None:
+    def start_save(self, paths: list[list[Path]], folder: Path | None, titles: list[str] | None = None) -> None:
         """Saves in a thread so the screen stays live; it works from a copy of the kept cards, so edits meanwhile don't leak in.
-        folder: one output set per kept card in it (save_batch); None: all kept cards in paths[0][0], one PDF."""
+        folder: one output set per kept card in it (save_batch); None: all kept cards in paths[0][0], one PDF, a bookmark per card (titles)."""
         self.saving = True
         jobs = [(self.cards[k].pages[:], self.cards[k].rects[:], [side[:] for side in self.card_boxes[k]]) for k in self.kept()]
         self.notify(f"Saving {len(jobs)} cards…", timeout=2)
-        self.write(jobs, paths, folder)
+        self.write(jobs, paths, folder, titles)
 
     @work(thread=True, group="cards")
-    def write(self, jobs: list[tuple[list, list, list[list]]], paths: list[list[Path]], folder: Path | None) -> None:
+    def write(self, jobs: list[tuple[list, list, list[list]]], paths: list[list[Path]], folder: Path | None, titles: list[str] | None) -> None:
         from pdf_card import cut, save_batch, save_cards
         sides = lambda pages, rects: [cut(page, rect) for page, rect in zip(pages, rects)]
         try:
             if folder is None:
-                save_cards([side for pages, rects, _ in jobs for side in sides(pages, rects)], paths[0][0], [b for *_, boxes in jobs for b in boxes])
+                save_cards([side for pages, rects, _ in jobs for side in sides(pages, rects)], paths[0][0],
+                           [b for *_, boxes in jobs for b in boxes], titles)
                 outputs = paths[0]
             else:
                 outputs = save_batch(((sides(pages, rects), boxes, out) for (pages, rects, boxes), out in zip(jobs, paths)), folder)
@@ -1031,7 +1156,7 @@ class PowerPDF(App):
 
     FileTree, PathList, RichLog { background: $surface; }
 
-    PromptDialog, ConfirmDialog, PrinterDialog, ChoiceDialog { align: center middle; background: $background 60%; }
+    PromptDialog, ConfirmDialog, PrinterDialog, ChoiceDialog, NameDialog { align: center middle; background: $background 60%; }
     CardScreen { background: $background; }
     CompareScreen { background: $background; }
     CompareScreen #saved { height: 1; padding: 0 1; background: $panel; }
@@ -1283,7 +1408,8 @@ class PowerPDF(App):
         worker = get_current_worker()
         try:
             with PDFIUM_LOCK:
-                mtime = path.stat().st_mtime_ns
+                stat = path.stat()
+                mtime = stat.st_mtime_ns
                 pdf = self.open_doc(path, mtime)
                 count = len(pdf)
                 image = self.render_cached(pdf, path, mtime, page)
@@ -1293,7 +1419,7 @@ class PowerPDF(App):
             return
         if worker.is_cancelled:
             return
-        self.call_from_thread(self.show_preview, path, page, count, image, meta)
+        self.call_from_thread(self.show_preview, path, page, count, image, meta, stat)
         if page + 1 < count and not worker.is_cancelled:  # warm the next flip
             try:
                 with PDFIUM_LOCK:
@@ -1306,7 +1432,8 @@ class PowerPDF(App):
         with PDFIUM_LOCK:
             self.close_doc()
 
-    def show_preview(self, path: Path, page: int, count: int, image, meta: dict) -> None:
+    def show_preview(self, path: Path, page: int, count: int, image, meta: dict, stat: os.stat_result) -> None:
+        """stat comes from the worker: a second stat here raised if the file was deleted while its preview loaded."""
         if path != self.current:
             return
         self.page_count = count
@@ -1315,7 +1442,6 @@ class PowerPDF(App):
         page_widget.display = True
         page_widget.image = image
         self.query_one("#preview").border_subtitle = self.preview_subtitle(page, count)
-        stat = path.stat()
         rows = [("pages", count), ("size", human_size(stat.st_size)),
                 ("modified", datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"))]
         rows += [(key.lower(), meta[key]) for key in ("Title", "Author", "Producer") if key in meta]

@@ -4,9 +4,12 @@ One scan may hold many cards: side by side (left = back, right = front) or stack
 from __future__ import annotations
 
 import contextlib
+import io
 import math
 import os
+import re
 import shutil
+import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +26,14 @@ MAX_PAGES = 12  # an A4 page at DPI is 26 MB in memory; 12 pages ≈ 310 MB
 
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
 Box = tuple[float, float, float, float]  # black box on a crop: center x, y, width, height in crop pixels at DPI
+
+# Tesseract is optional: without it cards get no name suggestions. Not on PATH by default on Windows.
+TESSERACT = shutil.which("tesseract") or str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Tesseract-OCR" / "tesseract.exe")
+PLATE = re.compile(r"(?<!\d)(\d{1,2}) ?[/|] ?(\d{3,6})(?!\d)")  # UAE traffic plate, code/number: 16/16402
+EMIRATES_ID = re.compile(r"(?<!\d)784 ?-? ?(\d{4}) ?-? ?(\d{7}) ?-? ?(\d)(?!\d)")
+# OCR passes per side: (top, bottom) band of the card, scale, ink threshold. The 22-45% band is where a vehicle
+# license's plate row is; reading it alone cuts the clutter around it. Measured on real scans: single passes drop digits.
+READINGS = ((0.0, 1.0, 1.0, 140), (0.0, 1.0, 1.0, 110), (0.0, 1.0, 1.5, 110), (0.22, 0.45, 1.5, 110), (0.22, 0.45, 2.0, 120))
 
 
 @dataclass
@@ -201,12 +212,19 @@ def jpeg_options(boxes: list[list[Box]]) -> dict:
     return JPEG | {"subsampling": 0} if any(boxes) else JPEG
 
 
-def save_cards(cards: list[Image.Image], output: Path, boxes: list[list[Box]]) -> None:
-    """One page per card, page = card, at OUT_DPI (small, still readable); no metadata beyond the Producer."""
+def save_cards(cards: list[Image.Image], output: Path, boxes: list[list[Box]], titles: list[str] | None = None) -> None:
+    """One page per card, page = card, at OUT_DPI (small, still readable); no metadata beyond the Producer.
+    titles: a bookmark per front and back pair (pages 1, 3, 5, …), so a PDF of many cards can be searched by name."""
     from pdf_compress import strip_metadata
+    from pypdf import PdfWriter
 
     pages = [downscale(card, card_boxes) for card, card_boxes in zip(cards, boxes)]
     pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], resolution=OUT_DPI, **jpeg_options(boxes))
+    if titles:
+        writer = PdfWriter(clone_from=io.BytesIO(output.read_bytes()))
+        for index, title in enumerate(titles):
+            writer.add_outline_item(title, index * 2)
+        writer.write(output)
     strip_metadata(output)
 
 
@@ -214,6 +232,52 @@ def save_jpgs(cards: list[Image.Image], outputs: list[Path], boxes: list[list[Bo
     """One JPEG per card at OUT_DPI; no EXIF (Pillow writes none unless asked)."""
     for card, output, card_boxes in zip(cards, outputs, boxes):
         downscale(card, card_boxes).save(output, "JPEG", dpi=(OUT_DPI, OUT_DPI), **jpeg_options([card_boxes]))
+
+
+def read_text(card: Image.Image, scale: float, ink: int) -> str:
+    """Tesseract's English reading of the card, after dropping the background: a pixel is ink only when its brightest
+    channel is below `ink`. Black print stays; yellow, blue or white card backgrounds and their security patterns go."""
+    brightest = np.asarray(card.convert("RGB")).max(axis=2)
+    image = Image.fromarray(np.where(brightest < ink, 0, 255).astype(np.uint8))
+    if scale != 1:
+        image = image.resize((round(image.width * scale), round(image.height * scale)), Image.Resampling.LANCZOS)
+    png = io.BytesIO()
+    image.save(png, "PNG")
+    result = subprocess.run(
+        [TESSERACT, "stdin", "stdout", "-l", "eng", "--psm", "6"], input=png.getvalue(), capture_output=True, timeout=60,
+        env=os.environ | {"OMP_THREAD_LIMIT": "1"},  # callers run several at once; one thread each is faster overall
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.stdout.decode("utf-8", "replace")
+
+
+def name_from_text(text: str) -> str | None:
+    """A file name from what a card says: a UAE traffic plate (16/16402 → 16-16402) or an Emirates ID number."""
+    if plate := PLATE.search(text):
+        return f"{plate[1]}-{plate[2]}"
+    if eid := EMIRATES_ID.search(text):
+        return f"784-{eid[1]}-{eid[2]}-{eid[3]}"
+    return None
+
+
+def suggest_name(sides: list[Image.Image]) -> tuple[str, int] | None:
+    """A name read off the card and the side it was on (0 front, 1 back; the back is read only when the front gives
+    nothing). None without Tesseract or a trustworthy reading. On real scans OCR finds about half the plates and some
+    passes drop a digit, so a name counts only when two passes agree on it and no pass reads a different one.
+    The user still confirms it."""
+    if not Path(TESSERACT).is_file():
+        return None
+    for side, card in enumerate(sides):
+        names = []
+        for top, bottom, scale, ink in READINGS:
+            band = card.crop((0, round(card.height * top), card.width, round(card.height * bottom)))
+            if name := name_from_text(read_text(band, scale, ink)):
+                names.append(name)
+        if len(set(names)) == 1 and len(names) >= 2:
+            return names[0], side
+        if names:  # a name is on this side but unconfirmed or contested: the other side won't settle it
+            return None
+    return None
 
 
 def save_batch(jobs: Iterable[tuple[list[Image.Image], list[list[Box]], list[Path]]], folder: Path) -> list[Path]:
