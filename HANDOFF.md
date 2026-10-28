@@ -132,10 +132,24 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 - CLI: run in a `$env:TEMP` copy folder with real scans, including an Arabic-named file. Check exit codes 0/1/2.
 - Look at outputs: `PdfReader(f).pages[0].images[0].image.save(...)` and view it. Readability of the license card is the acceptance bar.
-- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (19 tests, end-to-end through Textual's pilot).
+- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (23 tests, end-to-end through Textual's pilot).
 - Real TUI: in Herdr, split a pane, `pane run` the app in a temp copy folder, `pane send-keys` keys, `pane read --source visible`.
   Text reads never show images: judge previews by a picture of the window. Don't take over the user's own Herdr view; start an isolated
   session in its own window (`wt.exe -w new --maximized -d <dir> cmd /c "set HERDR_ENV=&& set HERDR_PANE_ID=&& set HERDR_SOCKET_PATH=&& herdr --session <name>"`,
   then `herdr --session <name> pane run w1:p1 …`) and capture just that window with `PrintWindow(hwnd, hdc, 2)` (works while it's behind other
   windows; `CopyFromScreen` shows whatever is in front, or the lock screen). Check plain Windows Terminal too, with a clean env (see gotchas).
   Stop the test session (`herdr session stop <name>`) and close the windows afterwards.
+
+## Releases
+
+GitHub releases on `janooh37-hue/powerpdf`, tag `v<version>`, asset `powerpdf-<version>-windows-x64.zip` (the app only, not the CLIs;
+Ghostscript is not bundled). Build a **one-folder** exe; one-file took 10–14 s to start (it unpacks ~200 MB to `%TEMP%` every run) vs 0.55 s warm:
+
+```
+uv run --frozen --with pyinstaller pyinstaller powerpdf.py --onedir --name powerpdf --console --noconfirm --clean `
+  --specpath build --workpath build --distpath dist --collect-submodules textual --collect-data textual `
+  --hidden-import pdf_merge --hidden-import pdf_split --hidden-import pdf_card --hidden-import pdf_compress --hidden-import pdf_image
+```
+
+Zip `dist\powerpdf\`, then `gh release create v<version> <zip> --title … --notes …`. `build/` and `dist/` are git-ignored.
+Smoke the exe before uploading: `dist\powerpdf\powerpdf.exe <temp folder>`, `a` (queue), `i` Enter (images), `k` (card, loads cv2).

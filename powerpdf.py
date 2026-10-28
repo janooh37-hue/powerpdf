@@ -260,7 +260,7 @@ class Splash(Screen):
             with Center():
                 yield Static(logo(), id="logo")
             with Center():
-                yield Static(f"[$foreground-muted]explore · preview · merge · split · print · compress · card · pages · redact · compare     v{VERSION}[/]")
+                yield Static(f"[$foreground-muted]explore · preview · merge · split · print · compress · card · pages · redact · compare · images     v{VERSION}[/]")
             with Center():
                 yield Static("[$foreground-muted]press any key[/]", id="skip")
 
