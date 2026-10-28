@@ -15,7 +15,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**23 passed**, `uv run --frozen pytest -q`, 40–110 s) |
+| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**25 passed**, `uv run --frozen pytest -q`, 40–160 s) |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 
@@ -43,6 +43,14 @@ New in 0.5.0:
 - **`t` Pages:** thumbnail grid. `space` select · `r` rotate 90° · `Del` delete · `shift+←/→` reorder · `x` extract to `<stem>_extract.pdf` · `Enter` save `<stem>_edited.pdf` · `Esc` close (asks if unsaved). Keys act on the selection, or the cursor page if none. Original is never changed.
 - **Card screen (`k`):** `Enter` saves `<stem>_card.pdf` = **the cards only**, 2 card-sized pages (front, back), 150 dpi, q80, no metadata. **`j`** saves `<stem>_front.jpg` / `<stem>_back.jpg` (150 dpi, q80, no EXIF; confirms before overwriting). **`b`** adds a black box on the current side; `space` steps crop → box 1 → … → crop; arrows / `shift`+arrows move/resize the selected box (or the crop); `backspace` removes the selected box; `tab` switches side. Boxes are painted into the pixels, grown to 8-px JPEG blocks and saved 4:4:4 so they decode to exactly (0,0,0).
 
+Unreleased (after 0.6.0) — **many cards per scan** (`k`):
+- `pdf_card.pair_cards` finds **every** card on up to `MAX_PAGES` = 12 pages (`detect_cards`: card-shaped, ≥80% filled, ≥½ the largest card's area) and groups them into rows (center within half a card height; real scans tilt rows by up to ~50 px, which broke the old `round(cy/50)` sort).
+  - **Side by side** (a row with 2+ cards): **left = back, right = front** (the user's arranged batches, e.g. `vehicle_licenses_batch_3_arranged.pdf`: 2 pages × 4 rows = 8 cards).
+  - **One per row**: paired in reading order, front first: front above back on one page, or page 1 then page 2 (old 2-page scans and `make_scan`).
+  - A side with no partner gets a **guess** mirrored across the page (left↔right, or top↔bottom), flagged ⚠ until its crop is moved. Pages with no cards are skipped; none anywhere → the old page/half-page fallback, flagged ⚠.
+- Card screen: top strip `Card 3 of 8 · page 1, row 3`, numbered chips (current, ~~skipped~~, ⚠ to check) and `Enter saves N cards`; a **Scan** map panel (the edited side's page, current card filled: edited side primary, other side accent; skipped darkened; redrawn 0.25 s after arrow nudges stop). `PgUp`/`PgDn` card · `s` swap front/back of this card · `x` skip/keep · `o` **one PDF** with every kept card (`<stem>_cards.pdf`, front, back, front, …). With 2+ cards, `Enter` / `j` ask for a folder (default `<stem>_cards\`) and write `<stem>_card_01.pdf` or `<stem>_card_01_front.jpg` + `_back.jpg` per kept card (numbers = strip numbers, so skips leave gaps). Encoded in a staging folder inside it, then swapped in; saves run in a thread from a snapshot of the cards. One card: exactly the old behavior and file names.
+- Rendering takes `PDFIUM_LOCK` per page (opened from bytes); detection runs outside the lock.
+
 New in 0.6.0:
 - **`i` Images:** queued (or highlighted) PDFs → one image per page, same layout as `pdfImage`. Choices: JPG 150 (default), PNG 150, JPG 300, PNG 300. The log shows each output and its total size. pdfium renders under `PDFIUM_LOCK` one page at a time; encoding runs outside the lock, so the preview stays responsive.
 
@@ -69,7 +77,7 @@ New in 0.6.0:
 - WhatsApp/iOS scans claim ~26×37″ pages (72 dpi), so `/ebook` doesn't downsample; the saving is JPEG re-encoding.
 - `-q screen` makes license small print **unreadable**; `ebook` is readable. `-c -q printer` can come out larger.
 - pdfium is not thread-safe: every call is under `PDFIUM_LOCK`. Preview/compare/grid open PDFs **from bytes**: a path-opened pdfium doc keeps a Windows file handle that blocks rename, Recycle Bin and overwrite (WinError 32).
-- **Card pairing:** `pair_cards` takes one card from each of the first two pages, or two cards from a single page. The license reference has front + back of a *different vehicle* on each page, so running `k` on the 2-page file gives two backs. Run it on one page (split first) for a real front + back.
+- **Card pairing:** see "many cards per scan" above. Front/back is decided by **position only** (no content check): left = back, right = front; stacked = front on top. A batch arranged the other way round needs `s` per card. The old reference (`20261007_102850.pdf`) now gives 2 cards (front top, back bottom on each page), not two backs.
 - The preview LRU holds 16 renders; opening the page grid on a long PDF flushes it (the main preview re-renders on demand).
 - `import powerpdf` still loads numpy and PIL because `textual_image` (sixel) needs them; cv2/pypdf are deferred.
 - **Preview resolution must not follow the panel size.** Sizing the render from the panel's current cells (tried in 0.5.0) gave a tiny, blurry page whenever the panel wasn't laid out yet (splash on top, window resized or font zoomed later), and the cache kept it. `textual_image` already resizes to the widget with Pillow; just hand it ≤1.5× / ≤1600 px. Windows Terminal doesn't answer the cell-size query, so textual_image assumes 10×20 px cells.
@@ -82,6 +90,7 @@ New in 0.6.0:
 
 - License scan (2 pages, each page front + back of one vehicle license, 1654×2338 JPEG per page): `C:\Users\GSSG\Downloads\Scans\20261007_102850.pdf`. Split pages and old A4 `_card.pdf` files are in `…\20261007_102850_pages\`.
 - Certificate (WhatsApp/iOS scan, 1,288 KB, iOS Producer + dates): `C:\Users\GSSG\Downloads\WhatsApp Scan 2026-09-14 at 14.55.52.pdf`.
+- Card batch (2 A4 pages × 4 rows, back left / front right, 8 vehicles): `C:\Users\GSSG\Downloads\Scans\20261028_121333_pages\vehicle_licenses_batch_3_arranged.pdf`; the raw scans `20261028_121333_page_001.pdf` / `_002.pdf` (4 vehicles each, true 85×54 mm) are next to it.
 
 ## Measurements (0.5.0, 2026-10-07)
 
@@ -98,6 +107,7 @@ New in 0.6.0:
 | License plain `ebook` | 232 KB (original shipped) | 232 KB (original, metadata stripped) |
 | Page grid, 50-page scan | — | all thumbnails 1.3–1.8 s; key latency median 2 ms while rendering |
 | `pdfImage`, 150 dpi, JPG / PNG | — | scan page 249 KB / 1,350 KB (PNG ~5×); vector form 130 / 132 KB; 1241×1754 px per A4 page; fake phone scan (26×37″ page) 1241×1755 instead of 3900×5514 |
+| Card batch (`batch_3_arranged`, unreleased) | `k` saw 2 cards | 8 cards, all front right / back left, none guessed; render 0.6–0.7 s + detect 64 ms/page; per-card PDFs 79–86 KB, one PDF with 8 cards 641 KB. Headless pilot, 180×48, pixel mode: 5 crop nudges 1.9 s (old screen 3.1 s), `PgDn` ~0.6 s (three half-cell images; the cost is textual_image's per-cell Rich styles, not the cuts: 33–50 ms + map 52–108 ms) |
 
 Older numbers still valid: `-c screen` 57 KB (unreadable); one card at JPEG q85/q70/q60 = 47/32/27 KB;
 OpenCV finds the license cards at 86×54 / 85×54 mm, tilted ~0.8° / ~2.3°; Tesseract on cards is garbage.
@@ -132,7 +142,7 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 - CLI: run in a `$env:TEMP` copy folder with real scans, including an Arabic-named file. Check exit codes 0/1/2.
 - Look at outputs: `PdfReader(f).pages[0].images[0].image.save(...)` and view it. Readability of the license card is the acceptance bar.
-- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (23 tests, end-to-end through Textual's pilot).
+- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (25 tests, end-to-end through Textual's pilot).
 - Real TUI: in Herdr, split a pane, `pane run` the app in a temp copy folder, `pane send-keys` keys, `pane read --source visible`.
   Text reads never show images: judge previews by a picture of the window. Don't take over the user's own Herdr view; start an isolated
   session in its own window (`wt.exe -w new --maximized -d <dir> cmd /c "set HERDR_ENV=&& set HERDR_PANE_ID=&& set HERDR_SOCKET_PATH=&& herdr --session <name>"`,

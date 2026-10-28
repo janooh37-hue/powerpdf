@@ -1,8 +1,14 @@
-"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and save front and back as a card-sized PDF or JPGs."""
+"""Cut ID / vehicle-license cards out of scanned PDFs, straighten them, and save front and back as a card-sized PDF or JPGs.
+One scan may hold many cards: side by side (left = back, right = front) or stacked (front above back)."""
 
 from __future__ import annotations
 
+import contextlib
 import math
+import os
+import shutil
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -13,24 +19,51 @@ from PIL import Image
 DPI = 300  # render scans at true size, so cuts keep their real size
 OUT_DPI = 150  # saved cards: small files, text still readable
 JPEG = {"quality": 80, "optimize": True}
+MAX_PAGES = 12  # an A4 page at DPI is 26 MB in memory; 12 pages ≈ 310 MB
 
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
 Box = tuple[float, float, float, float]  # black box on a crop: center x, y, width, height in crop pixels at DPI
 
 
-def render_pages(paths: list[Path], limit: int = 2) -> list[np.ndarray]:
-    """The first `limit` pages across the PDFs, as RGB arrays at DPI. Not thread-safe (pdfium)."""
-    pages = []
+@dataclass
+class Card:
+    """Both sides of one card, front first, each a rect on its page. A guessed side wasn't found on the scan:
+    it sits where the partner should be, for the user to move onto the card."""
+
+    pages: list[np.ndarray]
+    rects: list[Rect]
+    guessed: list[bool]
+    where: str  # e.g. "page 1, row 2"
+
+    def swap(self) -> None:
+        for sides in (self.pages, self.rects, self.guessed):
+            sides.reverse()
+
+
+def render_pages(paths: list[Path], limit: int = MAX_PAGES, lock=contextlib.nullcontext()) -> tuple[list[np.ndarray], int]:
+    """The first `limit` pages across the PDFs as RGB arrays at DPI, and how many pages the PDFs have.
+    lock guards pdfium (not thread-safe), one page at a time, so the app's preview keeps going between pages.
+    Opens from bytes: a path-opened pdfium document keeps a Windows file handle on the PDF."""
+    pages, total = [], 0
     for path in paths:
-        pdf = pdfium.PdfDocument(path)
+        data = path.read_bytes()
+        with lock:
+            pdf = pdfium.PdfDocument(data)
+            count = len(pdf)
         try:
-            for page in pdf:
-                if len(pages) == limit:
-                    return pages
-                pages.append(np.asarray(page.render(scale=DPI / 72).to_pil().convert("RGB")))
+            total += count
+            for index in range(min(count, limit - len(pages))):
+                with lock:
+                    page = pdf[index]
+                    try:
+                        image = page.render(scale=DPI / 72).to_pil()
+                    finally:
+                        page.close()
+                pages.append(np.asarray(image.convert("RGB")))
         finally:
-            pdf.close()
-    return pages
+            with lock:
+                pdf.close()
+    return pages, total
 
 
 def landscape(rect: Rect) -> Rect:
@@ -41,8 +74,8 @@ def landscape(rect: Rect) -> Rect:
     return center, (w, h), (angle + 90) % 180 - 90
 
 
-def find_cards(img: np.ndarray, n: int) -> list[Rect]:
-    """The n largest card-shaped regions, top to bottom; page bands when detection comes up short."""
+def detect_cards(img: np.ndarray) -> list[Rect]:
+    """Every card on the page. Cards in one scan share a size, so card-shaped blobs under half the largest one's area are dropped."""
     gray = cv2.GaussianBlur(cv2.cvtColor(img, cv2.COLOR_RGB2GRAY), (5, 5), 0)
     # card outline (edges) plus printed content (anything darker than paper white), merged into blobs
     mask = cv2.Canny(gray, 30, 100) | (gray < 225).astype(np.uint8) * 255
@@ -50,18 +83,43 @@ def find_cards(img: np.ndarray, n: int) -> list[Rect]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     page_area = img.shape[0] * img.shape[1]
     rects = []
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 0.016 * page_area:  # can't pass the filter below; most blobs are specks, skip them cheaply
+            continue
         rect = landscape(cv2.minAreaRect(contour))
         (w, h) = rect[1]
-        # ponytail: shape filter tuned for ID-1 cards (85.6 x 54 mm, ratio 1.59); widen for other cards
-        if 0.02 < w * h / page_area < 0.6 and 1.3 < w / h < 1.9:
+        # ponytail: shape filter tuned for ID-1 cards (85.6 x 54 mm, ratio 1.59); widen for other cards.
+        # Filled: a card is a solid rectangle, text lines and stamps are not.
+        if 0.02 < w * h / page_area < 0.6 and 1.3 < w / h < 1.9 and area > 0.8 * w * h:
             rects.append(rect)
-        if len(rects) == n:
-            break
-    if len(rects) < n:
-        H, W = img.shape[:2]
-        rects = [landscape(((W / 2, H * (2 * i + 1) / (2 * n)), (W, H / n), 0)) for i in range(n)]
-    return sorted(rects, key=lambda r: (round(r[0][1] / 50), r[0][0]))
+    largest = max((w * h for _, (w, h), _ in rects), default=0)
+    return [rect for rect in rects if rect[1][0] * rect[1][1] >= largest / 2]
+
+
+def rows(rects: list[Rect]) -> list[list[Rect]]:
+    """Rects in rows, top to bottom, each left to right. A rect joins a row when its center is within half a card height
+    of the row's first: scans tilt, so centers in one row can differ by tens of pixels."""
+    grouped: list[list[Rect]] = []
+    for rect in sorted(rects, key=lambda r: r[0][1]):
+        if grouped and abs(rect[0][1] - grouped[-1][0][0][1]) < grouped[-1][0][1][1] / 2:
+            grouped[-1].append(rect)
+        else:
+            grouped.append([rect])
+    return [sorted(row, key=lambda r: r[0][0]) for row in grouped]
+
+
+def partner(rect: Rect, page: np.ndarray, across: bool) -> Rect:
+    """Where a side that wasn't found should be: the found side mirrored across the page's middle, left-right (across) or top-bottom."""
+    (cx, cy), size, _ = rect
+    height, width = page.shape[:2]
+    return ((width - cx, cy) if across else (cx, height - cy)), size, 0.0
+
+
+def band(page: np.ndarray, index: int, count: int) -> Rect:
+    """A horizontal band of the page: what stands in for a card when none is found."""
+    height, width = page.shape[:2]
+    return landscape(((width / 2, height * (2 * index + 1) / (2 * count)), (width, height / count), 0))
 
 
 def cut_matrix(rect: Rect) -> np.ndarray:
@@ -88,11 +146,41 @@ def carry(boxes: list[Box], old: Rect, new: Rect) -> list[Box]:
     return [(float(x), float(y), w, h) for (x, y), (_, _, w, h) in zip(cv2.transform(page, cut_matrix(new))[0], boxes)]
 
 
-def pair_cards(pages: list[np.ndarray]) -> list[tuple[np.ndarray, Rect]]:
-    """Front and back: one card from each of two pages, or two cards from a single page."""
+def pair_cards(pages: list[np.ndarray]) -> list[Card]:
+    """Every card on the pages, in page order. Side by side (a row holds two or more): left = back, right = front.
+    Otherwise one per row, paired in reading order, front first: front above back, or page 1 then page 2.
+    A side without a partner gets a guess at the mirrored spot. Pages without cards are skipped (blank duplex backs);
+    with none found anywhere, the first two pages (or one page's halves) stand in, marked guessed."""
+    found: list[tuple[tuple[int, int], Card]] = []  # (page, row) sort key, card
+    single: list[tuple[int, np.ndarray, Rect]] = []  # (page number, page, rect): one card per row
+    for number, page in enumerate(pages, 1):
+        page_rows = rows(detect_cards(page))
+        if all(len(row) == 1 for row in page_rows):
+            single += [(number, page, row[0]) for row in page_rows]
+            continue
+        for row_number, row in enumerate(page_rows, 1):
+            for i in range(0, len(row), 2):
+                pair = row[i:i + 2]
+                guess = partner(pair[0], page, across=True) if len(pair) == 1 else None
+                if guess:
+                    pair = sorted([pair[0], guess], key=lambda rect: rect[0][0])
+                back, front = pair
+                where = f"page {number}, row {row_number}"
+                found.append(((number, row_number), Card([page, page], [front, back], [front is guess, back is guess], where)))
+    for i in range(0, len(single), 2):
+        (number, page, front), *rest = single[i:i + 2]
+        if rest:
+            (other, back_page, back), = rest
+            where = f"page {number}" if other == number else f"pages {number}–{other}"
+            card = Card([page, back_page], [front, back], [False, False], where)
+        else:
+            card = Card([page, page], [front, partner(front, page, across=False)], [False, True], f"page {number}")
+        found.append(((number, 0), card))
+    if found:
+        return [card for _, card in sorted(found, key=lambda item: item[0])]
     if len(pages) >= 2:
-        return [(page, find_cards(page, 1)[0]) for page in pages[:2]]
-    return [(pages[0], rect) for rect in find_cards(pages[0], 2)]
+        return [Card(pages[:2], [band(page, 0, 1) for page in pages[:2]], [True, True], "pages 1–2")]
+    return [Card([pages[0]] * 2, [band(pages[0], i, 2) for i in range(2)], [True, True], "page 1")]
 
 
 def downscale(card: Image.Image, boxes: list[Box]) -> Image.Image:
@@ -126,3 +214,24 @@ def save_jpgs(cards: list[Image.Image], outputs: list[Path], boxes: list[list[Bo
     """One JPEG per card at OUT_DPI; no EXIF (Pillow writes none unless asked)."""
     for card, output, card_boxes in zip(cards, outputs, boxes):
         downscale(card, card_boxes).save(output, "JPEG", dpi=(OUT_DPI, OUT_DPI), **jpeg_options([card_boxes]))
+
+
+def save_batch(jobs: Iterable[tuple[list[Image.Image], list[list[Box]], list[Path]]], folder: Path) -> list[Path]:
+    """Many cards into folder: per job, its sides to one path (a 2-page PDF) or two (front and back JPGs).
+    Every file is encoded in a staging folder first, so a failure mid-batch leaves the folder untouched; then they replace same-named files.
+    jobs is consumed lazily, so only one card's cuts are in memory at a time."""
+    from pdf_split import staging_dir
+
+    folder.mkdir(parents=True, exist_ok=True)
+    staging = staging_dir(folder, ".cards_")
+    try:
+        outputs = []
+        for sides, boxes, paths in jobs:
+            staged = [staging / path.name for path in paths]
+            save_cards(sides, staged[0], boxes) if len(staged) == 1 else save_jpgs(sides, staged, boxes)
+            outputs += paths
+        for path in outputs:
+            os.replace(staging / path.name, path)
+        return outputs
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)

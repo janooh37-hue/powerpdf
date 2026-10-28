@@ -387,13 +387,22 @@ class ChoiceDialog(ModalScreen[str | None]):
 
 
 class CardScreen(ModalScreen):
-    """Front and back cut out of scans: nudge each crop, black out private details, then save both as a card-sized 2-page PDF or two JPGs.
+    """Every card found in the scans, one at a time: front and back side by side, next to the scan page with each card outlined.
+    Nudge a crop, black out private details, swap front and back, skip a card, then save. One card: a 2-page PDF or two JPGs.
+    Many: a folder with a PDF (or front and back JPGs) per card, or one PDF with them all.
     Arrows, shift+arrows move/resize the selected black box, or the crop when none is selected; b adds a box (selected), space steps crop → box → … → crop."""
+
+    BATCH = {"step", "skip", "save_one"}  # actions that need more than one card; hidden otherwise
 
     BINDINGS = [
         Binding("enter", "save", "Save PDF"),
         Binding("j", "save_jpg", "Save JPG"),
+        Binding("o", "save_one", "One PDF"),
+        Binding("pagedown", "step(1)", "Card", key_display="PgUp PgDn"),
+        Binding("pageup", "step(-1)", "Card", show=False),
         Binding("tab", "switch", "Front/Back"),
+        Binding("s", "swap", "Swap"),
+        Binding("x", "skip", "Skip"),
         Binding("b", "add_box", "Black box"),
         Binding("space", "cycle", "Crop/Box"),
         Binding("backspace", "remove_box", "Remove box"),
@@ -414,25 +423,65 @@ class CardScreen(ModalScreen):
     def __init__(self, sources: list[Path], cards: list) -> None:
         super().__init__()
         self.sources = sources
-        self.pages = [page for page, _ in cards]
-        self.rects = [rect for _, rect in cards]
+        self.cards = cards  # pdf_card.Card, front first
+        self.card_boxes: list[list[list]] = [[[], []] for _ in cards]  # per card, per side: black boxes (pdf_card.Box), in crop pixels
+        self.skipped: set[int] = set()
+        self.index = 0  # the card on screen
         self.side = 0
-        self.boxes: list[list] = [[], []]  # per side: black boxes (pdf_card.Box), in crop pixels
         self.active: int | None = None  # selected box of the current side; None = the crop
+        self.thumbs: dict[int, tuple] = {}  # id(page) -> (small RGB image of the page, its scale)
+        self.saving = False
+        self.map_timer = None  # pending map redraw after arrow nudges
+
+    @property
+    def card(self):
+        return self.cards[self.index]
+
+    @property
+    def pages(self) -> list:
+        return self.card.pages
+
+    @property
+    def rects(self) -> list:
+        return self.card.rects
+
+    @property
+    def boxes(self) -> list[list]:
+        return self.card_boxes[self.index]
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        return len(self.cards) > 1 or action not in self.BATCH
 
     def compose(self) -> ComposeResult:
         image = HalfcellImage if self.app.pixel_mode else SharpImage
+        yield Static(id="strip")
         with Horizontal():
-            for i, name in enumerate(("Front", "Back")):
-                with Vertical(id=f"side{i}", classes="panel card") as panel:
-                    panel.border_title = name
+            with Vertical(id="map", classes="panel map") as panel:
+                panel.border_title = "Scan"
+                yield image(id="scan", classes="scan")
+            for i in range(2):
+                with Vertical(id=f"side{i}", classes="panel card"):
                     yield image(id=f"cut{i}", classes="cut")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#side0").add_class("-active")
+        self.show_card()
+
+    def show_card(self) -> None:
         for i in range(2):
             self.show(i)
-        self.action_switch(0)
+        self.show_marks()
+
+    def show_marks(self) -> None:
+        """Skipped or kept on the panels, the map and the strip; the cuts themselves don't change."""
+        skipped = self.index in self.skipped
+        for i in range(2):
+            panel = self.query_one(f"#side{i}")
+            panel.set_class(skipped, "-skipped")
+            panel.border_title = ("Front", "Back")[i] + (" · skipped (x keeps it)" if skipped else "")
+        self.show_map()
+        self.show_strip()
 
     def show(self, i: int) -> None:
         from PIL import ImageDraw
@@ -446,7 +495,82 @@ class CardScreen(ModalScreen):
         self.query_one(f"#cut{i}").image = image
         mm = lambda px: px / DPI * 25.4
         box = f" · box {self.active + 1}/{len(self.boxes[i])}" if i == self.side and self.active is not None else ""
-        self.query_one(f"#side{i}").border_subtitle = f"{mm(w):.1f} × {mm(h):.1f} mm · angle {angle:+.1f}°{box}"
+        guessed = " · ⚠ not found: move it onto the card" if self.card.guessed[i] else ""
+        self.query_one(f"#side{i}").border_subtitle = f"{mm(w):.1f} × {mm(h):.1f} mm · angle {angle:+.1f}°{box}{guessed}"
+
+    def show_map(self) -> None:
+        """The scan page of the current side, every card on it numbered (F front, B back); the current card filled, the side
+        being edited in primary (like its panel's border), the other in accent; skipped ones darkened. Fills, not just
+        outlines: they survive pixel mode's downscale."""
+        import cv2
+        from PIL import Image, ImageDraw, ImageFont
+        from textual.color import Color
+        page = self.pages[self.side]
+        if id(page) not in self.thumbs:
+            height, width = page.shape[:2]
+            scale = 1000 / max(height, width)
+            size = (round(width * scale), round(height * scale))
+            self.thumbs[id(page)] = Image.fromarray(page).resize(size, Image.Resampling.BILINEAR, reducing_gap=2.0), scale
+        thumb, scale = self.thumbs[id(page)]
+        css = self.app.get_css_variables()
+        tone = lambda name, alpha: (*Color.parse(css[name]).rgb, alpha)
+        overlay = Image.new("RGBA", thumb.size)
+        draw = ImageDraw.Draw(overlay)
+        font = ImageFont.load_default(size=40)
+        for k, card in enumerate(self.cards):
+            for s, (card_page, rect) in enumerate(zip(card.pages, card.rects)):
+                if card_page is not page:
+                    continue
+                current, color = k == self.index, "primary" if s == self.side else "accent"
+                fill = (0, 0, 0, 160) if k in self.skipped else tone(color, 110) if current else None
+                outline = tone(color, 255) if current else tone("foreground-muted", 220)
+                draw.polygon([tuple(point) for point in cv2.boxPoints(rect) * scale], fill=fill, outline=outline, width=8 if current else 3)
+                (cx, cy), _, _ = rect
+                draw.text((cx * scale, cy * scale), f"{k + 1}{'FB'[s]}", font=font, anchor="mm",
+                          fill=(255, 255, 255, 255), stroke_width=4, stroke_fill=(0, 0, 0, 255))
+        self.query_one("#scan").image = Image.alpha_composite(thumb.convert("RGBA"), overlay).convert("RGB")
+        self.query_one("#map").border_subtitle = self.card.where
+
+    def show_strip(self) -> None:
+        """Which card, a chip per card (current, skipped, ⚠ a side not found), and what Enter saves."""
+        count, kept = len(self.cards), len(self.cards) - len(self.skipped)
+        if count == 1:
+            text = f"[b]{escape(self.card.where)}[/]"
+        else:
+            first = max(0, min(self.index - 12, count - 25))  # a window of 25 chips around the current card
+            last = min(count, first + 25)
+            chips = []
+            for k in range(first, last):
+                warn = any(self.cards[k].guessed)
+                style = ("b reverse $primary" if k == self.index else "strike $foreground-muted" if k in self.skipped
+                         else "$warning" if warn else "$foreground")
+                chips.append(f"[{style}] {k + 1}{'⚠' if warn else ''} [/]")
+            more = "[$foreground-muted]…[/]"
+            text = (f"[b]Card {self.index + 1} of {count}[/] [$foreground-muted]· {escape(self.card.where)}[/]  "
+                    f"{more if first else ''}{''.join(chips)}{more if last < count else ''}")
+        notes = []
+        if unsure := sum(any(card.guessed) for card in self.cards):
+            notes.append(f"[$warning]⚠ {unsure} to check[/]")
+        if self.skipped:
+            notes.append(f"[$error]{len(self.skipped)} skipped[/]")
+        notes.append(f"[$success]Enter saves {kept} cards[/]" if count > 1 else "[$success]Enter saves front + back[/]")
+        self.query_one("#strip", Static).update(f"{text}   {' · '.join(notes)}")
+
+    def action_step(self, step: int) -> None:
+        index = min(max(self.index + step, 0), len(self.cards) - 1)
+        if index != self.index:
+            self.index, self.active = index, None
+            self.show_card()
+
+    def action_swap(self) -> None:
+        self.card.swap()
+        self.boxes.reverse()
+        self.active = None
+        self.show_card()
+
+    def action_skip(self) -> None:
+        self.skipped ^= {self.index}
+        self.show_marks()
 
     def action_switch(self, side: int | None = None) -> None:
         if self.active is not None:  # drop the selection outline
@@ -455,6 +579,7 @@ class CardScreen(ModalScreen):
         self.side = 1 - self.side if side is None else side
         for i in range(2):
             self.query_one(f"#side{i}").set_class(i == self.side, "-active")
+        self.show_map()  # the edited side's color moves, and the sides can be on different pages
 
     def action_add_box(self) -> None:
         (_, _), (w, h), _ = self.rects[self.side]
@@ -479,13 +604,32 @@ class CardScreen(ModalScreen):
         if self.active is not None and not da:  # tilt and rotate always act on the crop
             cx, cy, w, h = boxes[self.active]
             boxes[self.active] = (cx + dx, cy + dy, max(8, w + dw), max(8, h + dh))
-        else:
-            (cx, cy), (w, h), angle = old = self.rects[self.side]
-            self.rects[self.side] = new = ((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da)
-            self.boxes[self.side] = carry(boxes, old, new)  # boxes stay over the same spot of the card
+            self.show(self.side)
+            return
+        (cx, cy), (w, h), angle = old = self.rects[self.side]
+        self.rects[self.side] = new = ((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da)
+        self.boxes[self.side] = carry(boxes, old, new)  # boxes stay over the same spot of the card
+        self.card.guessed[self.side] = False  # placed by hand now
         self.show(self.side)
+        self.show_strip()
+        if self.map_timer:  # redraw the map once the arrows stop: a held arrow then redraws only the card
+            self.map_timer.stop()
+        self.map_timer = self.set_timer(0.25, self.show_map)
+
+    def kept(self) -> list[int]:
+        return [k for k in range(len(self.cards)) if k not in self.skipped]
+
+    def ready(self) -> bool:
+        if self.saving:
+            return False
+        if not self.kept():
+            self.notify("Every card is skipped: x keeps one.", severity="warning")
+        return bool(self.kept())
 
     def action_save(self) -> None:
+        if len(self.cards) > 1:
+            self.ask_folder("pdf")
+            return
         default = self.sources[0].with_name(f"{self.sources[0].stem}_card.pdf")
         self.app.push_screen(
             PromptDialog("Save front + back as", str(default), *output_checks(self.sources)),
@@ -493,6 +637,9 @@ class CardScreen(ModalScreen):
         )
 
     def action_save_jpg(self) -> None:
+        if len(self.cards) > 1:
+            self.ask_folder("jpg")
+            return
         outputs = [self.sources[0].with_name(f"{self.sources[0].stem}_{side}.jpg") for side in ("front", "back")]
         if existing := [o.name for o in outputs if o.exists()]:
             self.app.push_screen(
@@ -503,7 +650,7 @@ class CardScreen(ModalScreen):
             self.save(*outputs)
 
     def save(self, *outputs: Path) -> None:
-        """One output: a 2-page PDF. Two: front and back JPGs."""
+        """The one card. One output: a 2-page PDF. Two: front and back JPGs."""
         from pdf_card import cut, save_cards, save_jpgs
         try:
             cards = [cut(page, rect) for page, rect in zip(self.pages, self.rects)]
@@ -513,6 +660,71 @@ class CardScreen(ModalScreen):
             return
         self.app.pop_screen()
         self.app.saved_card(*outputs)
+
+    def batch_paths(self, folder: Path, kind: str) -> list[list[Path]]:
+        """Per kept card, numbered as in the strip: <stem>_card_01.pdf, or <stem>_card_01_front.jpg and _back.jpg."""
+        stem, width = self.sources[0].stem, max(2, len(str(len(self.cards))))
+        suffixes = [".pdf"] if kind == "pdf" else ["_front.jpg", "_back.jpg"]
+        return [[folder / f"{stem}_card_{k + 1:0{width}d}{suffix}" for suffix in suffixes] for k in self.kept()]
+
+    def ask_folder(self, kind: str) -> None:
+        if not self.ready():
+            return
+        folder = lambda value: Path(value).expanduser().resolve()
+        check = lambda value: "That's a file, not a folder" if folder(value).is_file() else None
+
+        def confirm(value: str) -> str | None:
+            existing = sum(path.exists() for paths in self.batch_paths(folder(value), kind) for path in paths)
+            return f"{existing} of the files exist. Enter again to overwrite" if existing else None
+
+        what = "a PDF" if kind == "pdf" else "front + back JPGs"
+        default = self.sources[0].with_name(f"{self.sources[0].stem}_cards")
+        self.app.push_screen(
+            PromptDialog(f"Save {len(self.kept())} cards, {what} each, in folder", str(default), check, confirm),
+            lambda value: value and self.start_save(self.batch_paths(folder(value), kind), folder(value)),
+        )
+
+    def action_save_one(self) -> None:
+        if not self.ready():
+            return
+        default = self.sources[0].with_name(f"{self.sources[0].stem}_cards.pdf")
+        self.app.push_screen(
+            PromptDialog(f"Save {len(self.kept())} cards in one PDF (front, back, front, …)", str(default), *output_checks(self.sources)),
+            lambda value: value and self.start_save([[Path(value).expanduser().resolve()]], None),
+        )
+
+    def start_save(self, paths: list[list[Path]], folder: Path | None) -> None:
+        """Saves in a thread so the screen stays live; it works from a copy of the kept cards, so edits meanwhile don't leak in.
+        folder: one output set per kept card in it (save_batch); None: all kept cards in paths[0][0], one PDF."""
+        self.saving = True
+        jobs = [(self.cards[k].pages[:], self.cards[k].rects[:], [side[:] for side in self.card_boxes[k]]) for k in self.kept()]
+        self.notify(f"Saving {len(jobs)} cards…", timeout=2)
+        self.write(jobs, paths, folder)
+
+    @work(thread=True, group="cards")
+    def write(self, jobs: list[tuple[list, list, list[list]]], paths: list[list[Path]], folder: Path | None) -> None:
+        from pdf_card import cut, save_batch, save_cards
+        sides = lambda pages, rects: [cut(page, rect) for page, rect in zip(pages, rects)]
+        try:
+            if folder is None:
+                save_cards([side for pages, rects, _ in jobs for side in sides(pages, rects)], paths[0][0], [b for *_, boxes in jobs for b in boxes])
+                outputs = paths[0]
+            else:
+                outputs = save_batch(((sides(pages, rects), boxes, out) for (pages, rects, boxes), out in zip(jobs, paths)), folder)
+        except OSError as error:
+            self.app.call_from_thread(self.save_failed, error)
+            return
+        self.app.call_from_thread(self.saved, outputs, len(jobs))
+
+    def save_failed(self, error: OSError) -> None:
+        self.saving = False
+        self.notify(f"Can't save: {error}", severity="error")
+
+    def saved(self, outputs: list[Path], count: int) -> None:
+        self.saving = False
+        if self.app.screen is self:  # not if Esc closed it while saving
+            self.app.pop_screen()
+        self.app.saved_cards(outputs, count)
 
 
 class CompareScreen(ModalScreen):
@@ -834,8 +1046,12 @@ class PowerPDF(App):
     PagesScreen .frame { height: 1fr; }
     PagesScreen .thumb { width: auto; height: 1fr; }
     PagesScreen .num { width: 100%; text-align: center; }
+    CardScreen #strip { height: 1; padding: 0 1; background: $panel; }
+    CardScreen .map { width: 24%; align: center middle; }
+    CardScreen .scan { width: 1fr; height: auto; }
     CardScreen .card { width: 1fr; align: center middle; }
     CardScreen .card.-active { border: round $primary; border-title-color: $primary; border-title-style: bold; }
+    CardScreen .card.-skipped { border: round $error; border-title-color: $error; }
     CardScreen .cut { width: 1fr; height: auto; }
     .dialog {
         width: 64; height: auto; max-height: 20; padding: 1 2;
@@ -1495,21 +1711,29 @@ class PowerPDF(App):
 
     def action_card(self) -> None:
         if not (targets := self.targets()):
-            self.notify("Highlight a scan with front and back pages, or queue two scans.", severity="warning")
+            self.notify("Highlight a scan with cards on it, or queue scans (e.g. fronts, then backs).", severity="warning")
             return
+        self.notify("Finding cards…", timeout=2)
         self.load_cards(targets)
 
     @work(thread=True, group="jobs")
     def load_cards(self, targets: list[Path]) -> None:
-        from pdf_card import pair_cards, render_pages
+        from pdf_card import MAX_PAGES, pair_cards, render_pages
         try:
-            with PDFIUM_LOCK:
-                pages = render_pages(targets)
+            pages, total = render_pages(targets, lock=PDFIUM_LOCK)
         except (pdfium.PdfiumError, OSError) as error:
             self.call_from_thread(self.say, f"✗ card: {error}", "error")
             return
-        if pages:
-            self.call_from_thread(self.push_screen, CardScreen(targets, pair_cards(pages)))
+        if not pages:
+            return
+        cards = pair_cards(pages)  # OpenCV only: outside the pdfium lock
+        self.call_from_thread(self.push_screen, CardScreen(targets, cards))
+        unsure = sum(any(card.guessed) for card in cards)
+        if len(cards) > 1 or unsure or total > len(pages):
+            found = f"Found {len(cards)} card{'s' if len(cards) > 1 else ''}"
+            found += f" on the first {MAX_PAGES} of {total} pages" if total > len(pages) else ""
+            found += f" · ⚠ {unsure} with a side not found: check it" if unsure else ""
+            self.call_from_thread(self.notify, found, severity="warning" if unsure or total > len(pages) else "information")
 
     def action_pages(self) -> None:
         path = self.focused_path()
@@ -1523,6 +1747,16 @@ class PowerPDF(App):
         self.notify(f"Saved → {', '.join(o.name for o in outputs)}")
         self.remember(*outputs)
         self.query_one(FileTree).reload()
+
+    def saved_cards(self, outputs: list[Path], count: int) -> None:
+        """A CardScreen saved count cards: one PDF with them all, or a folder of files."""
+        where = outputs[0] if len(outputs) == 1 else outputs[0].parent
+        size = human_size(sum(path.stat().st_size for path in outputs))
+        self.say(f"✓ {count} cards → {where} ({len(outputs)} file{'s' if len(outputs) > 1 else ''}, {size})", "success")
+        self.notify(f"Saved {count} cards → {where.name}")
+        if len(outputs) == 1:
+            self.remember(*outputs)
+        self.screen_stack[0].query_one(FileTree).reload()
 
     def saved_pages(self, output: Path, count: int) -> None:
         """A PagesScreen wrote output. It may still be open on top, so reach the main screen explicitly."""

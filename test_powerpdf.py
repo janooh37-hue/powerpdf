@@ -565,6 +565,74 @@ def test_card_black_boxes_are_pure_black_in_the_saved_images(tmp_path, key):
     run(tmp_path, scenario)
 
 
+def card_page(cards: list[tuple[tuple[int, int], float, tuple[int, int, int]]]) -> np.ndarray:
+    """An A4 page at 300 dpi with ID-1 cards: (center, angle, color) each."""
+    img = np.full((3508, 2480, 3), 250, np.uint8)
+    for center, angle, color in cards:
+        cv2.fillPoly(img, [cv2.boxPoints((center, (1011, 638), angle)).astype(np.int32)], color)
+    return img
+
+
+def side_color(card: pdf_card.Card, side: int) -> np.ndarray:
+    crop = np.asarray(pdf_card.cut(card.pages[side], card.rects[side]))
+    return crop[crop.shape[0] // 2, crop.shape[1] // 2].astype(int)
+
+
+def test_stacked_cards_pair_top_front_bottom_back_per_page():
+    """Two pages, each one vehicle stacked front over back: two cards, not one card made of two backs."""
+    colors = [(200, 60, 60), (60, 200, 60), (60, 60, 200), (200, 200, 60)]
+    pages = [card_page([((1240, 1000), 2, colors[0]), ((1240, 2400), -1, colors[1])]),
+             card_page([((1200, 1100), 0, colors[2]), ((1280, 2500), 3, colors[3])])]
+    cards = pdf_card.pair_cards(pages)
+    assert [card.where for card in cards] == ["page 1", "page 2"]
+    for card, (front, back) in zip(cards, (colors[:2], colors[2:])):
+        assert abs(side_color(card, 0) - front).max() < 12 and abs(side_color(card, 1) - back).max() < 12
+        assert card.guessed == [False, False]
+
+
+GRID = [  # side by side, left = back, right = front; row centers differ by up to 45 px, as on real scans
+    ((650, 600), 1, (180, 60, 60)), ((1830, 645), -2, (60, 180, 60)),
+    ((650, 1700), 0, (60, 60, 180)), ((1830, 1660), 2, (180, 180, 60)),
+    ((650, 2800), -1, (180, 60, 180)),  # its front is missing
+]
+
+
+def test_card_batch_pairs_rows_and_saves_a_pdf_per_kept_card(tmp_path):
+    Image.fromarray(card_page(GRID)).save(tmp_path / "scan.pdf", "PDF", resolution=300)
+    (back1, front1, back2, front2, back3) = (color for _, _, color in GRID)
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, "scan.pdf")
+        await pilot.press("k")
+        await settle(app, pilot)
+        screen = app.screen
+        assert isinstance(screen, powerpdf.CardScreen)
+        cards = screen.cards
+        assert [card.where for card in cards] == ["page 1, row 1", "page 1, row 2", "page 1, row 3"]
+        for card, front, back in zip(cards, (front1, front2), (back1, back2)):
+            assert abs(side_color(card, 0) - front).max() < 12 and abs(side_color(card, 1) - back).max() < 12
+        assert cards[2].guessed == [True, False] and abs(side_color(cards[2], 1) - back3).max() < 12
+        assert abs(cards[2].rects[0][0][0] - (2480 - 650)) < 2  # the missing front: mirrored across the page
+
+        await pilot.press("pagedown", "s")  # card 2: swap its sides, then back again
+        assert screen.index == 1 and abs(side_color(cards[1], 0) - back2).max() < 12
+        await pilot.press("s", "pagedown", "pagedown", "x")  # card 3: past the last stays on it; skip it
+        assert screen.index == 2 and screen.skipped == {2}
+        await pilot.press("enter")
+        assert isinstance(app.screen, PromptDialog) and app.screen.value == str(tmp_path / "scan_cards")
+        await submit(app, pilot)
+        assert not isinstance(app.screen, powerpdf.CardScreen)
+        outputs = sorted((tmp_path / "scan_cards").iterdir())
+        assert [path.name for path in outputs] == ["scan_card_01.pdf", "scan_card_02.pdf"]  # no staging folder left over
+        for path, colors in zip(outputs, ((front1, back1), (front2, back2))):
+            pdf = pdfium.PdfDocument(path)
+            mids = [np.asarray(pdf[i].render(scale=150 / 72).to_pil().convert("RGB"))[160, 253].astype(int) for i in range(len(pdf))]
+            pdf.close()
+            assert len(mids) == 2 and all(abs(mid - color).max() < 12 for mid, color in zip(mids, colors))
+        assert any(line.startswith("✓ 2 cards → ") for line in log_lines(app))
+
+    run(tmp_path, scenario)
+
 
 @pytest.mark.skipif(not shutil.which("gswin64c"), reason="needs Ghostscript")
 def test_compress_plain_and_cut_to_content(tmp_path):
