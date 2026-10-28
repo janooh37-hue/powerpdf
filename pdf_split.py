@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import secrets
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
@@ -34,11 +34,22 @@ def find_pdfs(paths: list[str]) -> list[Path]:
     return sorted(pdfs.values(), key=lambda item: str(item).lower())
 
 
+def staging_dir(parent: Path, prefix: str) -> Path:
+    """A new hidden folder in parent for outputs before they are swapped in.
+    Not tempfile.mkdtemp: on Windows (Python 3.12.4+) it sets an owner-only ACL that moved files keep, and from an
+    elevated shell the owner is Administrators, so Photos and Explorer can't open the results."""
+    while True:
+        folder = parent / f"{prefix}{secrets.token_hex(4)}"
+        try:
+            folder.mkdir()  # inherits parent's permissions, like any new file there
+            return folder
+        except FileExistsError:
+            continue
+
+
 def split_pdf(source: Path) -> tuple[int, Path]:
     output_dir = source.parent / f"{source.stem}_pages"
-    staging_dir = Path(
-        tempfile.mkdtemp(prefix=f".{source.stem}_pages_", dir=source.parent)
-    )
+    staging = staging_dir(source.parent, f".{source.stem}_pages_")
 
     try:
         with source.open("rb") as source_file:
@@ -52,17 +63,17 @@ def split_pdf(source: Path) -> tuple[int, Path]:
                 writer = PdfWriter()
                 writer.add_page(page)
                 output_name = f"{source.stem}_page_{page_number:0{width}d}.pdf"
-                with (staging_dir / output_name).open("wb") as output_file:
+                with (staging / output_name).open("wb") as output_file:
                     writer.write(output_file)
 
         output_dir.mkdir(exist_ok=True)
         for old_page in output_dir.glob(f"{source.stem}_page_*.pdf"):
             old_page.unlink()
-        for new_page in staging_dir.iterdir():
+        for new_page in staging.iterdir():
             new_page.replace(output_dir / new_page.name)
         return page_count, output_dir
     finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def main() -> int:

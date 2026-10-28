@@ -4,6 +4,7 @@ import asyncio
 import math
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -170,6 +171,26 @@ def test_images_one_per_page_capped_at_a4_and_rerun_drops_stale_pages(tmp_path):
 
     run(tmp_path, scenario)
 
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ACLs")
+@pytest.mark.parametrize("convert", ["split", "image", "images"])
+def test_outputs_get_the_folders_permissions(tmp_path, convert):
+    """Staging in a tempfile.mkdtemp folder gave outputs an owner-only ACL (SYSTEM, Administrators, OWNER RIGHTS):
+    from an elevated shell the owner is Administrators, so Photos and Explorer couldn't open the JPGs."""
+    from pdf_image import to_images
+    from pdf_split import split_pdf
+    folder = tmp_path / "plain"
+    folder.mkdir()
+    subprocess.run(["icacls", str(folder), "/grant", "*S-1-1-0:(OI)(CI)R"], check=True, capture_output=True)  # Everyone may read
+    pdf = make_pdf(folder / "a.pdf", pages=1 if convert == "image" else 2)
+    if convert == "split":
+        outputs = list(split_pdf(pdf)[1].iterdir())
+    else:
+        outputs = to_images(pdf, "jpg")
+    assert outputs
+    for output in outputs:
+        acl = subprocess.run(["icacls", str(output)], capture_output=True, text=True, check=True).stdout
+        assert "Everyone:(I)(R)" in acl, acl
 
 
 def test_queue_reorder_and_remove(tmp_path):

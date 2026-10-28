@@ -15,7 +15,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**20 passed**, `uv run --frozen pytest -q`, 40–110 s) |
+| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**23 passed**, `uv run --frozen pytest -q`, 40–110 s) |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 
@@ -59,6 +59,7 @@ New in 0.6.0:
 ## Gotchas (each one has bitten already)
 
 - **Console encoding is `ibm850`.** Arabic names from native tools garble. `pdf_print.ps1` sets `[Console]::OutputEncoding` to UTF-8 in try/finally; new PowerShell code reading native output needs the same.
+- **Never stage outputs in `tempfile.mkdtemp` / `TemporaryDirectory` and move them out.** Python 3.12.4+ gives that folder an owner-only, non-inherited ACL (SYSTEM, Administrators, OWNER RIGHTS) and moved files keep it. The user's PowerShell always runs **elevated** (for SSH work), so the owner is `BUILTIN\Administrators` and Photos/Explorer (not elevated) get "no permission". Use `pdf_split.staging_dir()` (plain `mkdir`, inherits the folder's ACL). Fix a broken file from an elevated shell: `icacls <file> /reset`.
 - **Never send test jobs to the SHARP.** Use a throwaway printer and remove it in `finally`:
   `Add-Printer -Name 'pdfPrint test' -DriverName 'Microsoft Print To PDF' -PortName 'nul:'`.
   Windows manages the default printer (`LegacyDefaultPrinterMode` = 0), so printing elsewhere can move the default. Check `Win32_Printer Default=TRUE` is the SHARP before and after.

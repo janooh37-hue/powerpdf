@@ -7,13 +7,12 @@ import argparse
 import contextlib
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 import pypdfium2 as pdfium
 
 from pdf_compress import A4_LONG_SIDE
-from pdf_split import find_pdfs
+from pdf_split import find_pdfs, staging_dir
 
 FORMATS = {  # extension: (Pillow format, save options, description)
     "jpg": ("JPEG", {"quality": 80, "optimize": True}, "small; best for scans and photos (default)"),
@@ -35,7 +34,7 @@ def to_images(source: Path, fmt: str, dpi: int = DPI, lock=contextlib.nullcontex
     that format left from an earlier run are replaced. lock guards pdfium (not thread-safe); encoding runs outside it.
     Opens from bytes: a path-opened pdfium document keeps a Windows file handle on the PDF."""
     kind, options, _ = FORMATS[fmt]
-    staging = Path(tempfile.mkdtemp(prefix=f".{source.stem}_images_", dir=source.parent))
+    staging = staging_dir(source.parent, f".{source.stem}_images_")
     try:
         with lock:
             pdf = pdfium.PdfDocument(source.read_bytes())
