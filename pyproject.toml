@@ -14,14 +14,18 @@ dependencies = [
 ]
 
 [project.scripts]
-powerpdf = "powerpdf:main"
+powerpdf = "powerpdf_cli:main"
+pdfsplit = "pdf_split:main"
+pdfmerge = "pdf_merge:main"
+pdfcompress = "pdf_compress:main"
+pdfimage = "pdf_image:main"
 
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["powerpdf", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress", "pdf_image"]
+py-modules = ["powerpdf", "powerpdf_cli", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress", "pdf_image"]
 
 [dependency-groups]
 dev = [

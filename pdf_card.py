@@ -19,6 +19,8 @@ import numpy as np
 import pypdfium2 as pdfium
 from PIL import Image
 
+from pdf_runtime import resolve_tool
+
 DPI = 300  # render scans at true size, so cuts keep their real size
 OUT_DPI = 150  # saved cards: small files, text still readable
 JPEG = {"quality": 80, "optimize": True}
@@ -27,8 +29,8 @@ MAX_PAGES = 12  # an A4 page at DPI is 26 MB in memory; 12 pages ≈ 310 MB
 Rect = tuple[tuple[float, float], tuple[float, float], float]  # OpenCV RotatedRect: center, size, angle
 Box = tuple[float, float, float, float]  # black box on a crop: center x, y, width, height in crop pixels at DPI
 
-# Tesseract is optional: without it cards get no name suggestions. Not on PATH by default on Windows.
-TESSERACT = shutil.which("tesseract") or str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Tesseract-OCR" / "tesseract.exe")
+# Optional in source installs; the Windows installer includes the OCR runtime.
+TESSERACT = resolve_tool("tesseract")
 PLATE = re.compile(r"(?<!\d)(\d{1,2}) ?[/|] ?(\d{3,6})(?!\d)")  # UAE traffic plate, code/number: 16/16402
 EMIRATES_ID = re.compile(r"(?<!\d)784 ?-? ?(\d{4}) ?-? ?(\d{7}) ?-? ?(\d)(?!\d)")
 # OCR passes per side: (top, bottom) band of the card, scale, ink threshold. The 22-45% band is where a vehicle
@@ -265,7 +267,7 @@ def suggest_name(sides: list[Image.Image]) -> tuple[str, int] | None:
     nothing). None without Tesseract or a trustworthy reading. On real scans OCR finds about half the plates and some
     passes drop a digit, so a name counts only when two passes agree on it and no pass reads a different one.
     The user still confirms it."""
-    if not Path(TESSERACT).is_file():
+    if not TESSERACT or not Path(TESSERACT).is_file():
         return None
     for side, card in enumerate(sides):
         names = []

@@ -39,6 +39,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
+from pdf_runtime import resolve_tool
+
 VERSION = "0.6.0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
 RECENT_MAX = 30
@@ -140,7 +142,7 @@ def print_pdf(path: Path, printer: str, timeout: float = 300) -> bool:
     Ghostscript waits forever on a printer that doesn't exist, hence the timeout."""
     try:
         result = subprocess.run(
-            ["gswin64c", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dNoCancel",
+            [resolve_tool("ghostscript") or "gswin64c", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dNoCancel",
              "-sDEVICE=mswinpr2", f"-sOutputFile=%printer%{printer}", str(path)],
             capture_output=True, timeout=timeout,
         )
@@ -1732,8 +1734,8 @@ class PowerPDF(App):
         if not (targets := self.targets()):
             self.notify("Highlight or queue a PDF to print.", severity="warning")
             return
-        if not shutil.which("gswin64c"):
-            self.notify("Ghostscript (gswin64c) not found on PATH.", severity="error")
+        if not resolve_tool("ghostscript"):
+            self.notify("Ghostscript not found. Install the bundled Windows release.", severity="error")
             return
         self.push_screen(PrinterDialog(), lambda printer: printer and self.print_files(targets, printer))
 
@@ -1741,8 +1743,8 @@ class PowerPDF(App):
         if not (targets := self.targets()):
             self.notify("Highlight or queue a PDF to compress.", severity="warning")
             return
-        if not (gs := shutil.which("gswin64c") or shutil.which("gs")):
-            self.notify("Ghostscript (gswin64c) not found on PATH.", severity="error")
+        if not (gs := resolve_tool("ghostscript")):
+            self.notify("Ghostscript not found. Install the bundled Windows release.", severity="error")
             return
         choices = [Option(label, id=choice) for choice, label in [
             ("ebook", "ebook          150 dpi, readable (recommended)"),

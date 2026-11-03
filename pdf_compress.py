@@ -17,6 +17,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject
 
 from pdf_split import find_pdfs
+from pdf_runtime import resolve_tool
 
 QUALITY = {  # name: (dpi, description)
     "screen": (72, "smallest; 72 dpi, fine for full pages, small print (e.g. ID cards) unreadable"),
@@ -135,9 +136,9 @@ def main() -> int:
                              "Pages become images, so text is no longer selectable")
     args = parser.parse_args()
 
-    gs = shutil.which("gswin64c") or shutil.which("gs")
+    gs = resolve_tool("ghostscript")
     if not gs:
-        parser.error("Ghostscript not found (gswin64c); install it with: scoop install ghostscript")
+        parser.error("Ghostscript not found; use the PowerPDF installer or install Ghostscript.")
 
     try:
         # skip earlier outputs so re-runs don't make name_small_small.pdf
