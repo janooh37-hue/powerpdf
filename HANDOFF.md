@@ -1,6 +1,6 @@
 # PowerPDF — handoff
 
-Date: 2026-10-27. Owner: GSSG (Windows 11, PowerShell 7). Version **0.6.0**.
+Date: 2026-11-03. Owner: GSSG (Windows 11, PowerShell 7). Version **0.7.0**.
 
 ## Goal
 
@@ -15,7 +15,7 @@ The open backlog is at the bottom. **Don't build from it until the user picks by
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Git repo. Textual app, package `powerpdf` 0.6.0, entry point `powerpdf`; modules `powerpdf`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`, `test_powerpdf.py` (**33 passed**, `uv run --frozen pytest -q`, 40–200 s; OCR is stubbed by the autouse `no_ocr` fixture) |
+| `C:\Users\GSSG\projects\powerpdf\` | Owner's source checkout. Textual app, package `powerpdf` 0.7.0; modules `powerpdf`, `powerpdf_cli`, `pdf_runtime`, `pdf_merge`, `pdf_split`, `pdf_card`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`; `test_powerpdf.py` and `test_runtime.py` (36 tests; OCR is stubbed by the autouse `no_ocr` fixture). Installer builds run in Windows CI; this release was prepared in a Linux clone |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 
@@ -43,7 +43,7 @@ New in 0.5.0:
 - **`t` Pages:** thumbnail grid. `space` select · `r` rotate 90° · `Del` delete · `shift+←/→` reorder · `x` extract to `<stem>_extract.pdf` · `Enter` save `<stem>_edited.pdf` · `Esc` close (asks if unsaved). Keys act on the selection, or the cursor page if none. Original is never changed.
 - **Card screen (`k`):** `Enter` saves `<stem>_card.pdf` = **the cards only**, 2 card-sized pages (front, back), 150 dpi, q80, no metadata. **`j`** saves `<stem>_front.jpg` / `<stem>_back.jpg` (150 dpi, q80, no EXIF; confirms before overwriting). **`b`** adds a black box on the current side; `space` steps crop → box 1 → … → crop; arrows / `shift`+arrows move/resize the selected box (or the crop); `backspace` removes the selected box; `tab` switches side. Boxes are painted into the pixels, grown to 8-px JPEG blocks and saved 4:4:4 so they decode to exactly (0,0,0).
 
-Unreleased (after 0.6.0) — **many cards per scan** (`k`):
+New in 0.7.0 — **many cards per scan** (`k`), OCR names, and the complete Windows installer (see Releases):
 - `pdf_card.pair_cards` finds **every** card on up to `MAX_PAGES` = 12 pages (`detect_cards`: card-shaped, ≥80% filled, ≥½ the largest card's area) and groups them into rows (center within half a card height; real scans tilt rows by up to ~50 px, which broke the old `round(cy/50)` sort).
   - **Side by side** (a row with 2+ cards): **left = back, right = front** (the user's arranged batches, e.g. `vehicle_licenses_batch_3_arranged.pdf`: 2 pages × 4 rows = 8 cards).
   - **One per row**: paired in reading order, front first: front above back on one page, or page 1 then page 2 (old 2-page scans and `make_scan`).
@@ -147,7 +147,7 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 - CLI: run in a `$env:TEMP` copy folder with real scans, including an Arabic-named file. Check exit codes 0/1/2.
 - Look at outputs: `PdfReader(f).pages[0].images[0].image.save(...)` and view it. Readability of the license card is the acceptance bar.
-- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (33 tests, end-to-end through Textual's pilot).
+- App: `cd ~/projects/powerpdf; uv run --frozen pytest -q` (36 tests: Textual pilot plus runtime resolution-order cases).
 - Real TUI: in Herdr, split a pane, `pane run` the app in a temp copy folder, `pane send-keys` keys, `pane read --source visible`.
   Text reads never show images: judge previews by a picture of the window. Don't take over the user's own Herdr view; start an isolated
   session in its own window (`wt.exe -w new --maximized -d <dir> cmd /c "set HERDR_ENV=&& set HERDR_PANE_ID=&& set HERDR_SOCKET_PATH=&& herdr --session <name>"`,
@@ -184,8 +184,8 @@ Source development (`uv run`) still uses local tools when no bundle is present.
 
 The workflow silently installs a lower-version rehearsal installer, upgrades it, then starts a fresh shell
 with registry-refreshed PATH and poisoned external-tool PATH commands. It checks `--version`, bundled tool
-resolution and versions, OCR languages, generated-PDF compress/image/split/merge output, and `pdfprint -h`
-(**no physical print jobs**). Silent uninstall must remove the executable and PATH entry. Only then are
+resolution and versions, OCR languages, generated-PDF compress/image/split/merge output, `pdfprint -h`,
+and a cancelled bundled-fzf picker (**no physical print jobs**). Silent uninstall must remove the executable and PATH entry. Only then are
 assets uploaded and the tag's release published. Actions logs contain the `SMOKE` evidence lines.
 
 Second asset: **`powerpdf-<version>-windows-x64.zip`**, the same complete runtime for portable use;

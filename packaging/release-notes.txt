@@ -31,4 +31,4 @@ one-file extraction on every launch.
 The release is published only after Windows CI tests and silent-install smoke
 checks pass: refreshed PATH, version, all CLIs, bundled Ghostscript/Tesseract/fzf,
 English+Arabic+OSD data, upgrade and uninstall PATH cleanup. Printing smoke checks
-help only; no physical printer jobs are submitted.
+help and a cancelled file picker only; no physical printer jobs are submitted.

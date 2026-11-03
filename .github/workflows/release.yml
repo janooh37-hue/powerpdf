@@ -50,8 +50,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          (Get-Content packaging/release-notes.txt -Raw).Replace('<version>', $env:VERSION) | Set-Content build/release-notes.txt
           gh release create "v$env:VERSION" `
             "dist/powerpdf-$env:VERSION-windows-x64-setup.exe" `
             "dist/powerpdf-$env:VERSION-windows-x64.zip" `
             'dist/ghostscript-10.08.0-source.tar.xz' `
-            --verify-tag --title "PowerPDF $env:VERSION" --notes-file packaging/release-notes.txt
+            --verify-tag --title "PowerPDF $env:VERSION" --notes-file build/release-notes.txt
