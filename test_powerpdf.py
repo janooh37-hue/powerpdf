@@ -1,6 +1,7 @@
 """End-to-end tests: drive the real app with Textual's pilot against real PDFs on disk."""
 
 import asyncio
+import json
 import math
 import os
 import shutil
@@ -757,5 +758,38 @@ def test_compress_plain_and_cut_to_content(tmp_path):
             assert len(sizes) == 2 and all(widths[0] <= w <= widths[1] for w in sizes), sizes
         assert app.recent[0] == output
         assert sum(line.startswith("✓ scan.pdf → scan_small.pdf") for line in log_lines(app)) == 2
+
+    run(tmp_path, scenario)
+
+
+def test_arabic_display_never_changes_logical_paths_or_rename_input(tmp_path, monkeypatch):
+    from pdf_display import display_name
+    from powerpdf import QueueList, RecentList
+
+    monkeypatch.setenv("POWERPDF_BIDI", "on")
+    original = make_pdf(tmp_path / "رخصة المركبة.pdf")
+    renamed = tmp_path / "شهادة 2026.pdf"
+
+    async def scenario(app, pilot):
+        await highlight(app, pilot, original.name)
+        await pilot.press("space")
+        app.remember(original)
+        tree = app.query_one(FileTree)
+        node = tree.cursor_node
+        assert node.data.path == original
+        assert node.label.plain == original.name
+        rendered = tree.render_label(node, tree.rich_style, tree.rich_style)
+        assert display_name(original.name) in rendered.plain
+        assert app.query_one(QueueList).get_option_at_index(0).id == str(original)
+        assert display_name(original.name) in str(app.query_one(QueueList).get_option_at_index(0).prompt)
+        assert app.query_one(RecentList).get_option_at_index(0).id == str(original)
+        assert display_name(original.name) in str(app.query_one("#info").render())
+        await pilot.press("f2")
+        assert app.screen.query_one(Input).value == original.name
+        await submit(app, pilot, renamed.name)
+        assert renamed.is_file() and not original.exists()
+        assert app.queue == [renamed]
+        assert app.recent == [renamed]
+        assert json.loads(powerpdf.SETTINGS.read_text(encoding="utf-8"))["recent"] == [str(renamed)]
 
     run(tmp_path, scenario)

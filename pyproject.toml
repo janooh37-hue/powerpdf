@@ -4,6 +4,8 @@ version = "0.7.0"
 description = "A pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact, compare and save PDFs as images"
 requires-python = ">=3.12"
 dependencies = [
+    "arabic-reshaper>=3.0.0",
+    "python-bidi>=0.6.0",
     "numpy>=2.5.3",
     "opencv-python-headless>=5.0.0.93",
     "pypdf>=6",
@@ -25,7 +27,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["powerpdf", "powerpdf_cli", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress", "pdf_image"]
+py-modules = ["powerpdf", "powerpdf_cli", "pdf_display", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress", "pdf_image"]
 
 [dependency-groups]
 dev = [

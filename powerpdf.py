@@ -40,6 +40,7 @@ from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from pdf_runtime import resolve_tool
+from pdf_display import display_name
 
 VERSION = "0.7.0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
@@ -120,7 +121,7 @@ def human_size(size: float) -> str:
 
 
 def details(rows: list[tuple[str, object]]) -> str:
-    return "\n".join(f"[$foreground-muted]{k:<9}[/]{escape(str(v))}" for k, v in rows)
+    return "\n".join(f"[$foreground-muted]{k:<9}[/]{escape(display_name(str(v)))}" for k, v in rows)
 
 
 def list_printers() -> list[str]:
@@ -198,6 +199,18 @@ class FileTree(DirectoryTree):
     def render_label(self, node, base_style, style):
         label = super().render_label(node, base_style, style)
         path = node.data.path if node.data else None
+        visual = display_name(node.label.plain)
+        if visual != node.label.plain:
+            # Preserve DirectoryTree's clickable icon, but rebuild name spans:
+            # lam-alef ligatures can change offsets in the logical label.
+            prefix = len(label.plain) - len(node.label.plain)
+            name = Text(visual, style=style)
+            if self.is_mounted:
+                component = "folder" if path and path.is_dir() else "file"
+                name.stylize_before(self.get_component_rich_style(f"directory-tree--{component}", partial=True))
+                if component == "file":
+                    name.highlight_regex(r"\..+$", self.get_component_rich_style("directory-tree--extension", partial=True))
+            label = label[:prefix] + name
         if path is None or path.is_dir():
             return label
         if path.suffix.lower() != ".pdf":
@@ -311,7 +324,7 @@ class PromptDialog(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog") as dialog:
-            dialog.border_title = self.title_text
+            dialog.border_title = escape(display_name(self.title_text))
             yield Input(self.value)
             yield Label("[$foreground-muted]Enter to confirm · Esc to cancel[/]", id="hint")
 
@@ -320,10 +333,10 @@ class PromptDialog(ModalScreen[str | None]):
         value = event.value.strip()
         hint = self.query_one("#hint", Label)
         if error := self.check(value):
-            hint.update(f"[$error]{escape(error)}[/]")
+            hint.update(f"[$error]{escape(display_name(error))}[/]")
         elif (warning := self.confirm(value)) and self.armed != value:
             self.armed = value
-            hint.update(f"[$warning]{escape(warning)}[/]")
+            hint.update(f"[$warning]{escape(display_name(warning))}[/]")
         else:
             self.dismiss(value)
 
@@ -362,7 +375,7 @@ class PrinterDialog(ModalScreen[str | None]):
         try:
             printers = list_printers()
         except (OSError, subprocess.CalledProcessError) as error:
-            self.app.call_from_thread(self.show, [], f"[$error]{escape(str(error))}[/]")
+            self.app.call_from_thread(self.show, [], f"[$error]{escape(display_name(str(error)))}[/]")
             return
         hint = "[$foreground-muted]Enter to print · Esc to cancel[/]" if printers else "[$error]No printers found[/]"
         self.app.call_from_thread(self.show, printers, hint)
@@ -413,8 +426,8 @@ class NameDialog(ModalScreen[str | None]):
         self.title_text, self.value, self.read, self.labels = title, value, read, labels
 
     def compose(self) -> ComposeResult:
-        picks = [Option(f"{escape(self.read)}  [$foreground-muted]read off the card: check it[/]", id="read")] if self.read else []
-        picks += [Option(f"… {escape(label)}", id=f"label:{label}") for label in self.labels]
+        picks = [Option(f"{escape(display_name(self.read))}  [$foreground-muted]read off the card: check it[/]", id="read")] if self.read else []
+        picks += [Option(f"… {escape(display_name(label))}", id=f"label:{label}") for label in self.labels]
         with Vertical(classes="dialog") as dialog:
             dialog.border_title = self.title_text
             yield Input(self.value, placeholder="plate or number, then a word: 16-16402 Station")
@@ -647,11 +660,11 @@ class CardScreen(ModalScreen):
         """The current card's name: confirmed, read by OCR (and the side it was read on), or how to give one."""
         k = self.index
         if name := self.names[k]:
-            return f"[b $success]{escape(name)}[/]"
+            return f"[b $success]{escape(display_name(name))}[/]"
         if found := self.suggested[k]:
             name, side = found
             swapped = " [$warning]read on the Back: s swaps?[/]" if side != self.swapped[k] else ""
-            return f"[$warning]{escape(name)}?[/] [$foreground-muted]n confirms[/]{swapped}"
+            return f"[$warning]{escape(display_name(name))}?[/] [$foreground-muted]n confirms[/]{swapped}"
         return "[$foreground-muted]n names it[/]"
 
     def action_step(self, step: int) -> None:
@@ -759,7 +772,7 @@ class CardScreen(ModalScreen):
         outputs = [self.sources[0].with_name(f"{self.names[0] or self.sources[0].stem}_{side}.jpg") for side in ("front", "back")]
         if existing := [o.name for o in outputs if o.exists()]:
             self.app.push_screen(
-                ConfirmDialog(f"Overwrite [b]{escape(' and '.join(existing))}[/]?"),
+                ConfirmDialog(f"Overwrite [b]{escape(' and '.join(display_name(name) for name in existing))}[/]?"),
                 lambda ok: ok and self.save(*outputs),
             )
         else:
@@ -772,7 +785,7 @@ class CardScreen(ModalScreen):
             cards = [cut(page, rect) for page, rect in zip(self.pages, self.rects)]
             save_cards(cards, outputs[0], self.boxes) if len(outputs) == 1 else save_jpgs(cards, list(outputs), self.boxes)
         except OSError as error:
-            self.notify(f"Can't save: {error}", severity="error")
+            self.notify(f"Can't save: {display_name(str(error))}", severity="error")
             return
         self.app.pop_screen()
         self.app.saved_card(*outputs)
@@ -845,7 +858,7 @@ class CardScreen(ModalScreen):
 
     def save_failed(self, error: OSError) -> None:
         self.saving = False
-        self.notify(f"Can't save: {error}", severity="error")
+        self.notify(f"Can't save: {display_name(str(error))}", severity="error")
 
     def saved(self, outputs: list[Path], count: int) -> None:
         self.saving = False
@@ -879,7 +892,7 @@ class CompareScreen(ModalScreen):
         with Horizontal():
             for i, (label, path) in enumerate(zip(("Original", "Small"), self.paths)):
                 with Vertical(id=f"side{i}", classes="panel compare") as panel:
-                    panel.border_title = f"{label} · {path.name}"
+                    panel.border_title = f"{label} · {escape(display_name(path.name))}"
                     yield image(id=f"shot{i}", classes="shot")
         yield Footer()
 
@@ -904,7 +917,7 @@ class CompareScreen(ModalScreen):
                     finally:
                         pdf.close()
         except (pdfium.PdfiumError, OSError) as error:
-            self.app.call_from_thread(self.notify, f"Can't compare: {error}", severity="error")
+            self.app.call_from_thread(self.notify, f"Can't compare: {display_name(str(error))}", severity="error")
             return
         if not get_current_worker().is_cancelled:
             self.app.call_from_thread(self.show, page, shots)
@@ -978,7 +991,7 @@ class PagesScreen(ModalScreen):
                     image = app.render_cached(pdf, self.path, mtime, page, box)
                 app.call_from_thread(self.show_thumb, page, image)
         except (pdfium.PdfiumError, OSError) as error:
-            app.call_from_thread(self.notify, f"Can't show pages: {error}", severity="error")
+            app.call_from_thread(self.notify, f"Can't show pages: {display_name(str(error))}", severity="error")
             if not self.cells:
                 app.call_from_thread(self.dismiss)
         finally:
@@ -1016,7 +1029,7 @@ class PagesScreen(ModalScreen):
 
     def status(self) -> None:
         self.query_one("#status", Static).update(
-            f"[b $accent]{escape(self.path.name)}[/]  [$foreground-muted]{len(self.order)} pages · "
+            f"[b $accent]{escape(display_name(self.path.name))}[/]  [$foreground-muted]{len(self.order)} pages · "
             f"{len(self.picked)} selected{' · [$warning]unsaved[/]' if self.edited else ''}[/]"
         )
 
@@ -1106,7 +1119,7 @@ class PagesScreen(ModalScreen):
                 writer.add_page(reader.pages[page]).rotate(90 * self.turns.get(page, 0))
             writer.write(output)
         except Exception as error:  # any pypdf/IO failure is shown, not a crash
-            self.notify(f"Can't save: {error}", severity="error")
+            self.notify(f"Can't save: {display_name(str(error))}", severity="error")
             return
         self.app.saved_pages(output, len(pages))
         if close:
@@ -1115,7 +1128,7 @@ class PagesScreen(ModalScreen):
     def action_close(self) -> None:
         if self.edited:
             self.app.push_screen(
-                ConfirmDialog(f"Discard your changes to [b]{escape(self.path.name)}[/]?"),
+                ConfirmDialog(f"Discard your changes to [b]{escape(display_name(self.path.name))}[/]?"),
                 lambda ok: ok and self.dismiss(),
             )
         else:
@@ -1273,7 +1286,7 @@ class PowerPDF(App):
     def topbar(self) -> str:
         return (
             f"[b $primary]▐█▌[/] [b]Power[$accent]PDF[/][/]  "
-            f"[$foreground-muted]v{VERSION} · {escape(str(self.root))}[/]"
+            f"[$foreground-muted]v{VERSION} · {escape(display_name(str(self.root)))}[/]"
         )
 
     def save_settings(self, **changes) -> None:
@@ -1417,7 +1430,7 @@ class PowerPDF(App):
                 image = self.render_cached(pdf, path, mtime, page)
                 meta = pdf.get_metadata_dict(skip_empty=True)
         except (pdfium.PdfiumError, OSError) as error:
-            self.call_from_thread(self.show_info, path, f"[$error]Can't open: {escape(str(error))}[/]")
+            self.call_from_thread(self.show_info, path, f"[$error]Can't open: {escape(display_name(str(error)))}[/]")
             return
         if worker.is_cancelled:
             return
@@ -1453,7 +1466,7 @@ class PowerPDF(App):
         return f"page {page + 1}/{count} · [ ] flip" + (" · pixels (v)" if self.pixel_mode else "")
 
     def show_info(self, path: Path, body: str) -> None:
-        self.query_one("#info", Static).update(f"[b $accent]{escape(path.name)}[/]\n\n{body}")
+        self.query_one("#info", Static).update(f"[b $accent]{escape(display_name(path.name))}[/]\n\n{body}")
 
     async def action_toggle_pixels(self) -> None:
         self.pixel_mode = not self.pixel_mode
@@ -1538,9 +1551,9 @@ class PowerPDF(App):
         try:
             os.startfile(path)  # Windows: the file's default app
         except OSError as error:
-            self.notify(f"Can't open {path.name}: {error}", severity="error")
+            self.notify(f"Can't open {display_name(path.name)}: {display_name(str(error))}", severity="error")
             return
-        self.say(f"Opened {path.name}")
+        self.say(f"Opened {display_name(path.name)}")
         self.remember(path)
 
     def action_reveal(self) -> None:
@@ -1569,17 +1582,17 @@ class PowerPDF(App):
         try:
             path.rename(new)
         except OSError as error:
-            self.say(f"✗ rename failed: {error}", "error")
+            self.say(f"✗ rename failed: {display_name(str(error))}", "error")
             return
         self.moved(path, new)
-        self.say(f"Renamed {path.name} → {name}")
+        self.say(f"Renamed {display_name(path.name)} → {display_name(name)}")
 
     def action_delete(self) -> None:
         path = self.focused_path()
         if path is None or path == self.root:
             return
         self.push_screen(
-            ConfirmDialog(f"Move [b]{escape(path.name)}[/] to the Recycle Bin?"),
+            ConfirmDialog(f"Move [b]{escape(display_name(path.name))}[/] to the Recycle Bin?"),
             lambda ok: ok and self.trash(path),
         )
 
@@ -1587,10 +1600,10 @@ class PowerPDF(App):
         try:
             send2trash(path)
         except OSError as error:
-            self.say(f"✗ delete failed: {error}", "error")
+            self.say(f"✗ delete failed: {display_name(str(error))}", "error")
             return
         self.moved(path, None)
-        self.say(f"Moved {path.name} to the Recycle Bin")
+        self.say(f"Moved {display_name(path.name)} to the Recycle Bin")
 
     def moved(self, old: Path, new: Path | None) -> None:
         """Keep queue and recent in step with a renamed (new) or deleted (None) file or folder."""
@@ -1629,7 +1642,7 @@ class PowerPDF(App):
         highlighted = options.highlighted
         options.clear_options()
         options.add_options(
-            Option(f"{escape(p.name)}\n[$foreground-muted]{escape(str(p.parent))}[/]", id=str(p))
+            Option(f"{escape(display_name(p.name))}\n[$foreground-muted]{escape(display_name(str(p.parent)))}[/]", id=str(p))
             for p in self.recent
         )
         if self.recent:
@@ -1641,7 +1654,7 @@ class PowerPDF(App):
         options = self.query_one(QueueList)
         options.clear_options()
         options.add_options(
-            Option(f"{i:>2}. {escape(p.name)}", id=str(p)) for i, p in enumerate(self.queue, 1)
+            Option(f"{i:>2}. {escape(display_name(p.name))}", id=str(p)) for i, p in enumerate(self.queue, 1)
         )
         options.border_title = f"Queue · {len(self.queue)}"
         options.border_subtitle = "shift+↑↓ move · del remove" if self.queue else "space to add"
@@ -1696,14 +1709,14 @@ class PowerPDF(App):
     @work(thread=True, group="jobs")
     def merge(self, queue: list[Path], output: Path) -> None:
         from pdf_merge import merge_pdfs
-        log = lambda line: self.call_from_thread(self.say, line)
+        log = lambda line: self.call_from_thread(self.say, display_name(line))
         try:
             pages = merge_pdfs(queue, output, log)
         except Exception as error:  # any pypdf/IO failure goes to the log, not a crash
-            self.call_from_thread(self.say, f"✗ merge failed: {error}", "error")
+            self.call_from_thread(self.say, f"✗ merge failed: {display_name(str(error))}", "error")
             return
-        self.call_from_thread(self.say, f"✓ {output} ({pages} pages)", "success")
-        self.call_from_thread(self.notify, f"Merged → {output.name}")
+        self.call_from_thread(self.say, f"✓ {display_name(str(output))} ({pages} pages)", "success")
+        self.call_from_thread(self.notify, f"Merged → {display_name(output.name)}")
         self.call_from_thread(self.remember, output, *queue)
         self.call_from_thread(self.query_one(FileTree).reload)
 
@@ -1721,10 +1734,10 @@ class PowerPDF(App):
             try:
                 pages, folder = split_pdf(pdf)
             except Exception as error:  # report and continue with the rest, like pdfSplit
-                self.call_from_thread(self.say, f"✗ {pdf.name}: {error}", "error")
+                self.call_from_thread(self.say, f"✗ {display_name(pdf.name)}: {display_name(str(error))}", "error")
                 continue
             done.append(pdf)
-            self.call_from_thread(self.say, f"✓ {pdf.name} → {folder.name}/ ({pages} pages)", "success")
+            self.call_from_thread(self.say, f"✓ {display_name(pdf.name)} → {display_name(folder.name)}/ ({pages} pages)", "success")
         self.call_from_thread(self.notify, f"Split {len(done)}/{len(targets)} PDFs",
                               severity="information" if len(done) == len(targets) else "error")
         self.call_from_thread(self.remember, *done)
@@ -1768,10 +1781,10 @@ class PowerPDF(App):
             try:
                 output = compress(gs, pdf, quality, bool(crop))
             except Exception as error:  # Ghostscript/IO failure: report and continue, like pdfCompress
-                self.call_from_thread(self.say, f"✗ {pdf.name}: {error}", "error")
+                self.call_from_thread(self.say, f"✗ {display_name(pdf.name)}: {display_name(str(error))}", "error")
                 continue
             before, after = pdf.stat().st_size, output.stat().st_size
-            self.call_from_thread(self.say, f"✓ {pdf.name} → {output.name} ({human_size(before)} → "
+            self.call_from_thread(self.say, f"✓ {display_name(pdf.name)} → {display_name(output.name)} ({human_size(before)} → "
                                   f"{human_size(after)}{', larger' if after > before else ''})",
                                   "success" if after <= before else "warning")
             done.append(output)
@@ -1803,11 +1816,11 @@ class PowerPDF(App):
             try:
                 outputs = to_images(pdf, fmt, int(dpi), PDFIUM_LOCK)
             except Exception as error:  # pdfium/IO failure: report and continue, like pdfImage
-                self.call_from_thread(self.say, f"✗ {pdf.name}: {error}", "error")
+                self.call_from_thread(self.say, f"✗ {display_name(pdf.name)}: {display_name(str(error))}", "error")
                 continue
             size = human_size(sum(o.stat().st_size for o in outputs))
             where = outputs[0].name if len(outputs) == 1 else f"{outputs[0].parent.name}/ ({len(outputs)} pages)"
-            self.call_from_thread(self.say, f"✓ {pdf.name} → {where}, {size}", "success")
+            self.call_from_thread(self.say, f"✓ {display_name(pdf.name)} → {display_name(where)}, {size}", "success")
             done.append(pdf)
         self.call_from_thread(self.notify, f"Saved images of {len(done)}/{len(targets)} PDFs",
                               severity="information" if len(done) == len(targets) else "error")
@@ -1818,12 +1831,12 @@ class PowerPDF(App):
     def print_files(self, targets: list[Path], printer: str) -> None:
         done = []
         for pdf in targets:
-            self.call_from_thread(self.say, f"Printing {pdf.name} → {printer}")
+            self.call_from_thread(self.say, f"Printing {display_name(pdf.name)} → {display_name(printer)}")
             if print_pdf(pdf, printer):
                 done.append(pdf)
             else:
-                self.call_from_thread(self.say, f"✗ failed: {pdf}", "error")
-        self.call_from_thread(self.notify, f"Sent {len(done)}/{len(targets)} to {printer}",
+                self.call_from_thread(self.say, f"✗ failed: {display_name(str(pdf))}", "error")
+        self.call_from_thread(self.notify, f"Sent {len(done)}/{len(targets)} to {display_name(printer)}",
                               severity="information" if len(done) == len(targets) else "error")
         self.call_from_thread(self.remember, *done)
 
@@ -1850,7 +1863,7 @@ class PowerPDF(App):
         try:
             pages, total = render_pages(targets, lock=PDFIUM_LOCK)
         except (pdfium.PdfiumError, OSError) as error:
-            self.call_from_thread(self.say, f"✗ card: {error}", "error")
+            self.call_from_thread(self.say, f"✗ card: {display_name(str(error))}", "error")
             return
         if not pages:
             return
@@ -1871,8 +1884,8 @@ class PowerPDF(App):
             self.notify("Highlight a PDF to see its pages.", severity="warning")
 
     def saved_card(self, *outputs: Path) -> None:
-        self.say(f"✓ {' + '.join(map(str, outputs))} (front + back)", "success")
-        self.notify(f"Saved → {', '.join(o.name for o in outputs)}")
+        self.say(f"✓ {' + '.join(display_name(str(path)) for path in outputs)} (front + back)", "success")
+        self.notify(f"Saved → {', '.join(display_name(o.name) for o in outputs)}")
         self.remember(*outputs)
         self.query_one(FileTree).reload()
 
@@ -1880,16 +1893,16 @@ class PowerPDF(App):
         """A CardScreen saved count cards: one PDF with them all, or a folder of files."""
         where = outputs[0] if len(outputs) == 1 else outputs[0].parent
         size = human_size(sum(path.stat().st_size for path in outputs))
-        self.say(f"✓ {count} cards → {where} ({len(outputs)} file{'s' if len(outputs) > 1 else ''}, {size})", "success")
-        self.notify(f"Saved {count} cards → {where.name}")
+        self.say(f"✓ {count} cards → {display_name(str(where))} ({len(outputs)} file{'s' if len(outputs) > 1 else ''}, {size})", "success")
+        self.notify(f"Saved {count} cards → {display_name(where.name)}")
         if len(outputs) == 1:
             self.remember(*outputs)
         self.screen_stack[0].query_one(FileTree).reload()
 
     def saved_pages(self, output: Path, count: int) -> None:
         """A PagesScreen wrote output. It may still be open on top, so reach the main screen explicitly."""
-        self.say(f"✓ {output} ({count} pages)", "success")
-        self.notify(f"Saved → {output.name}")
+        self.say(f"✓ {display_name(str(output))} ({count} pages)", "success")
+        self.notify(f"Saved → {display_name(output.name)}")
         self.remember(output)
         self.screen_stack[0].query_one(FileTree).reload()
 
