@@ -1,0 +1,43 @@
+name: Mintty Arabic video demo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [spike/arabic-rtl]
+    paths: ['.github/workflows/demo-mintty.yml', 'packaging/demo/**']
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - name: Install locked app dependencies
+        run: uv sync --frozen
+      - name: Install ffmpeg if absent
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE) { throw 'ffmpeg installation failed' }
+          }
+          ffmpeg -version
+      - name: Record real desktop terminal scenarios
+        run: ./packaging/demo/record-mintty.ps1
+      - name: Retain video and diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: powerpdf-mintty-arabic-demo
+          path: demo-output/
+          if-no-files-found: error
+          retention-days: 14
