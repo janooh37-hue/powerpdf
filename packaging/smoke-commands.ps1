@@ -42,6 +42,16 @@ pdfmerge "$folder/scan_pages/scan_page_001.pdf" "$folder/scan_pages/scan_page_00
 Assert-Exit 'pdfmerge'
 pdfprint -h
 Assert-Exit 'pdfprint help (no printer jobs)'
+# Exercise the Windows PowerShell 5.1 picker but cancel before printer enumeration.
+$previousFzfOptions = $env:FZF_DEFAULT_OPTS
+try {
+    $env:FZF_DEFAULT_OPTS = '--filter=powerpdf-smoke-no-match-7f184c'
+    pdfprint $folder
+    if ($LASTEXITCODE -ne 1) { throw 'Cancelled pdfprint picker must exit 1 without printing' }
+    Write-Host 'SMOKE PRINT bundled fzf selection cancelled before printer enumeration OK'
+} finally {
+    $env:FZF_DEFAULT_OPTS = $previousFzfOptions
+}
 foreach ($path in @('scan_small.pdf', 'scan_images/scan_page_001.jpg', 'scan_pages/scan_page_002.pdf', 'merged.pdf')) {
     if (-not (Test-Path "$folder/$path")) { throw "Missing output: $path" }
 }

@@ -55,7 +55,9 @@ if ($gs -like '*\vendor\ghostscript\bin\gswin64c.exe') {
 
 # fzf talks UTF-8; the console default (e.g. ibm850) garbles non-ASCII names like Arabic
 $prevEncoding = [Console]::OutputEncoding
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$prevPipeEncoding = $OutputEncoding
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $OutputEncoding
 try {
     $files = @()
     $pool = @()
@@ -91,4 +93,5 @@ try {
     exit [int]($failed -gt 0)
 } finally {
     [Console]::OutputEncoding = $prevEncoding
+    $OutputEncoding = $prevPipeEncoding
 }
