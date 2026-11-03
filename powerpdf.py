@@ -42,7 +42,7 @@ from textual.worker import get_current_worker
 from pdf_runtime import resolve_tool
 from pdf_display import display_name
 
-VERSION = "0.7.0"
+VERSION = "0.7.1.dev0"
 SETTINGS = Path(os.environ.get("APPDATA") or Path.home() / ".config") / "powerpdf" / "settings.json"
 RECENT_MAX = 30
 BAD_NAME_CHARS = set('\\/:*?"<>|')

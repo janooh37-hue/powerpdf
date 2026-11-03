@@ -273,7 +273,7 @@ wheels = [
 
 [[package]]
 name = "powerpdf"
-version = "0.7.0"
+version = "0.7.1.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "arabic-reshaper" },

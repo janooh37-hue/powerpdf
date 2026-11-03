@@ -1,5 +1,6 @@
 """Display strings are visual only; the app must keep logical path identity."""
 
+import pdf_display
 import pytest
 from rich.cells import cell_len, get_character_cell_size
 
@@ -12,16 +13,43 @@ def force_cell_order(monkeypatch):
 
 
 @pytest.mark.parametrize(("logical", "visual"), [
-    ("رخصة المركبة.pdf", "pdf.\ufe94\ufe92\ufedb\ufeae\ufee4\ufedf\ufe8d \ufe94\ufebc\ufea7\ufead"),
-    ("شهادة 2026.pdf", "pdf.2026 \ufe93\ufea9\ufe8e\ufeec\ufeb7"),
+    ("رخصة المركبة.pdf", "\ufe94\ufe92\ufedb\ufeae\ufee4\ufedf\ufe8d \ufe94\ufebc\ufea7\ufead.pdf"),
+    ("شهادة 2026.pdf", "2026 \ufe93\ufea9\ufe8e\ufeec\ufeb7.pdf"),
     ("Ahmed عقد.pdf", "Ahmed \ufeaa\ufed8\ufecb.pdf"),
-    ("تقرير الترخيص 2026 (2).pdf", "pdf.(2) 2026 \ufeba\ufef4\ufea7\ufeae\ufe98\ufedf\ufe8d \ufeae\ufef3\ufeae\ufed8\ufe97"),
-    ("لا.pdf", "pdf.\ufefb"),
+    ("تقرير الترخيص 2026 (2).pdf", "(2) 2026 \ufeba\ufef4\ufea7\ufeae\ufe98\ufedf\ufe8d \ufeae\ufef3\ufeae\ufed8\ufe97.pdf"),
+    ("لا.pdf", "\ufefb.pdf"),
 ])
 def test_known_visual_cell_order(logical, visual):
     assert display_name(logical) == visual
     assert cell_len(visual) == len(visual)
     assert all(get_character_cell_size(ch) == 1 for ch in visual)
+
+
+@pytest.mark.parametrize(("logical", "visual"), [
+    ("عقد (2).pdf", "(2) \ufeaa\ufed8\ufecb.pdf"),
+    ("عقد [2].pdf", "[2] \ufeaa\ufed8\ufecb.pdf"),
+    ("عقد {2}.pdf", "{2} \ufeaa\ufed8\ufecb.pdf"),
+    ("عقد ([2]).pdf", "([2]) \ufeaa\ufed8\ufecb.pdf"),
+    ("عقد (2) [3].pdf", "[3] (2) \ufeaa\ufed8\ufecb.pdf"),
+    ("عقد (draft 2).pdf", "\ufeaa\ufed8\ufecb (draft 2).pdf"),
+    ("Ahmed (عقد).pdf", "Ahmed (\ufeaa\ufed8\ufecb).pdf"),
+    ("عقد (Ahmed عقد).pdf", "\ufeaa\ufed8\ufecb (Ahmed \ufeaa\ufed8\ufecb).pdf"),
+    ("عقد \u23292\u3009.pdf", "\u30082\u232a \ufeaa\ufed8\ufecb.pdf"),
+])
+def test_bracket_pairs_resolve_before_level_aware_mirroring(logical, visual):
+    assert display_name(logical) == visual
+    assert visual.endswith(".pdf")
+
+
+def test_ascii_fast_path_skips_detection_and_transforms(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("ASCII display must not run detection, shaping, or bidi")
+
+    monkeypatch.setattr(pdf_display, "bidi_enabled", unexpected)
+    monkeypatch.setattr(pdf_display._RESHAPER, "reshape", unexpected)
+    monkeypatch.setattr(pdf_display.algorithm, "get_embedding_levels", unexpected)
+    logical = "C:\\reports\\report 2026 (2).pdf"
+    assert display_name(logical) is logical
 
 
 @pytest.mark.parametrize("name", ["report 2026 (2).pdf", "résumé.pdf", "文件.pdf", ""])

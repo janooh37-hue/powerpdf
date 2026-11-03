@@ -1,6 +1,6 @@
 [project]
 name = "powerpdf"
-version = "0.7.0"
+version = "0.7.1.dev0"
 description = "A pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact, compare and save PDFs as images"
 requires-python = ">=3.12"
 dependencies = [
