@@ -3,14 +3,17 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Download([string] $Url, [string] $Destination, [string] $Sha256) {
+    Write-Host "Downloading $Url"
     Invoke-WebRequest $Url -OutFile $Destination
     if ($Sha256 -and (Get-FileHash $Destination -Algorithm SHA256).Hash -ne $Sha256) {
         throw "Checksum mismatch: $Url"
     }
 }
-function Run-Installer([string] $File, [string] $Destination) {
-    $process = Start-Process -FilePath $File -ArgumentList @('/S', "/D=$Destination") -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Dependency installation failed: $File ($($process.ExitCode))" }
+function Expand-Installer([string] $File, [string] $Destination) {
+    # NSIS payload extraction avoids upstream installers' UI/redistributable downloads.
+    Write-Host "Extracting $File to $Destination"
+    & '7z.exe' x "-o$Destination" -y -bso0 -bsp0 $File
+    if ($LASTEXITCODE) { throw "Dependency extraction failed: $File" }
 }
 
 $printScript = (Resolve-Path 'pdf_print.ps1').Path
@@ -33,7 +36,7 @@ $gsRelease = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/dow
 Download "$gsRelease/gs10080w64.exe" "$downloads/ghostscript.exe" '52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50'
 Download "$gsRelease/ghostscript-10.08.0.tar.xz" "$root/dist/ghostscript-10.08.0-source.tar.xz" 'c20492bc8ebb96c87fa2e52a0926e1cda8cde95d66145e018ac713fed5da38cf'
 $gsHome = Join-Path $root 'build/ghostscript'
-Run-Installer "$downloads/ghostscript.exe" $gsHome
+Expand-Installer "$downloads/ghostscript.exe" $gsHome
 New-Item -ItemType Directory -Force "$vendor/ghostscript" | Out-Null
 foreach ($part in @('bin', 'lib', 'Resource', 'iccprofiles', 'doc')) {
     if (Test-Path "$gsHome/$part") { Copy-Item "$gsHome/$part" "$vendor/ghostscript/$part" -Recurse }
@@ -48,7 +51,7 @@ foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'co
 Download 'https://community.chocolatey.org/api/v2/package/tesseract/5.5.0.20241111' "$downloads/tesseract.zip" '56659a4c01e6ea75a0b710ba7e8bb16e9cc6675978d2861323751812aeea6183'
 Expand-Archive "$downloads/tesseract.zip" "$downloads/tesseract-package" -Force
 $tessHome = Join-Path $root 'build/tesseract'
-Run-Installer "$downloads/tesseract-package/tools/tesseract-ocr-w64-setup-5.5.0.20241111.exe" $tessHome
+Expand-Installer "$downloads/tesseract-package/tools/tesseract-ocr-w64-setup-5.5.0.20241111.exe" $tessHome
 New-Item -ItemType Directory -Force "$vendor/tesseract/tessdata" | Out-Null
 Copy-Item "$tessHome/tesseract.exe", "$tessHome/*.dll" "$vendor/tesseract"
 Copy-Item "$tessHome/doc" "$vendor/tesseract/doc" -Recurse
