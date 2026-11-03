@@ -252,11 +252,14 @@ class Desktop:
 
     def key(self, vk: int, ctrl=False) -> None:
         if ctrl:
-            self.input(0x11)
-        self.input(vk)
-        self.input(vk, flags=2)
+            self.input(0x11, scan=self.user.MapVirtualKeyW(0x11, 0))
+        scan = self.user.MapVirtualKeyW(vk, 0)
+        # Mintty distinguishes real extended navigation keys from keypad events.
+        extended = 1 if vk in (0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E) else 0
+        self.input(vk, scan=scan, flags=extended)
+        self.input(vk, scan=scan, flags=extended | 2)
         if ctrl:
-            self.input(0x11, flags=2)
+            self.input(0x11, scan=self.user.MapVirtualKeyW(0x11, 0), flags=2)
 
     def text(self, text: str, delay=0.012) -> None:
         # KEYEVENTF_UNICODE emits real desktop Unicode key events, not clipboard or app APIs.
