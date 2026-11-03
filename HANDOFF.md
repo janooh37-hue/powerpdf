@@ -157,14 +157,42 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 ## Releases
 
-GitHub releases on `janooh37-hue/powerpdf`, tag `v<version>`, asset `powerpdf-<version>-windows-x64.zip` (the app only, not the CLIs;
-Ghostscript is not bundled). Build a **one-folder** exe; one-file took 10–14 s to start (it unpacks ~200 MB to `%TEMP%` every run) vs 0.55 s warm:
+Releases on `janooh37-hue/powerpdf` are built on **Windows GitHub Actions**, never cross-compiled on Linux.
+`.github/workflows/release.yml` runs on a `v*` tag or `workflow_dispatch` (manual rehearsals do not publish).
+The tag must match `pyproject.toml`. The workflow installs uv/Python 3.13, syncs `uv.lock`, runs
+`uv run --frozen pytest -q`, then `packaging/build-windows.ps1` builds a **one-folder** PyInstaller
+runtime and Inno Setup installer. One-file is deliberately not used: it took 10–14 s per launch.
+Textual data/submodules and every `pdf_*` module are collected explicitly.
 
-```
-uv run --frozen --with pyinstaller pyinstaller powerpdf.py --onedir --name powerpdf --console --noconfirm --clean `
-  --specpath build --workpath build --distpath dist --collect-submodules textual --collect-data textual `
-  --hidden-import pdf_merge --hidden-import pdf_split --hidden-import pdf_card --hidden-import pdf_compress --hidden-import pdf_image
-```
+Download **`powerpdf-<version>-windows-x64-setup.exe`** for a complete installation:
+- Default: per-user `%LOCALAPPDATA%\Programs\PowerPDF`, no admin rights; optional all-users mode.
+- `bin` goes on the appropriate user/machine PATH; setup/uninstall broadcast `WM_SETTINGCHANGE`.
+- Commands in any new terminal: `powerpdf`, `pdfsplit`, `pdfmerge`, `pdfcompress`, `pdfimage`, `pdfprint`.
+  The CLIs are thin `.cmd` shims into the same frozen executable, without importing Textual for CLI work.
+- Start Menu shortcut launches in Windows Terminal if present, otherwise a normal console; desktop shortcut optional.
+- Add/Remove Programs uninstall removes the PATH entry. The fixed AppId upgrades an existing installation in place.
+- Includes **Ghostscript 10.06.0**, **Tesseract 5.5.0.20241111** plus `eng`, `ara`, `osd`
+  (`tessdata_fast` 4.1.0), and **fzf 0.67.0**. No extra runtime installations or PowerShell 7 are needed.
+  Downloads are version-pinned and SHA-256 checked. Ghostscript includes its DLL, lib, Resource and ICC profiles.
+- `bin\licenses` and `bin\THIRD-PARTY-NOTICES.txt` contain licenses/source links: Ghostscript AGPL-3.0,
+  Tesseract/models Apache-2.0, fzf MIT. The exact Ghostscript source archive is a separate release asset.
 
-Zip `dist\powerpdf\`, then `gh release create v<version> <zip> --title … --notes …`. `build/` and `dist/` are git-ignored.
-Smoke the exe before uploading: `dist\powerpdf\powerpdf.exe <temp folder>`, `a` (queue), `i` Enter (images), `k` (card, loads cv2).
+`pdf_runtime.resolve_tool` prefers bundled `vendor` directories under `sys._MEIPASS`, then beside the
+frozen exe, then PATH, then known install directories. It sets `TESSDATA_PREFIX` / `GS_LIB` for bundled
+tools. `pdf_print.ps1` applies the same order and also works on Windows PowerShell 5.1.
+Source development (`uv run`) still uses local tools when no bundle is present.
+
+The workflow silently installs a lower-version rehearsal installer, upgrades it, then starts a fresh shell
+with registry-refreshed PATH and poisoned external-tool PATH commands. It checks `--version`, bundled tool
+resolution and versions, OCR languages, generated-PDF compress/image/split/merge output, and `pdfprint -h`
+(**no physical print jobs**). Silent uninstall must remove the executable and PATH entry. Only then are
+assets uploaded and the tag's release published. Actions logs contain the `SMOKE` evidence lines.
+
+Second asset: **`powerpdf-<version>-windows-x64.zip`**, the same complete runtime for portable use;
+extract the whole folder (no PATH/shortcuts automatically). Third: `ghostscript-10.06.0-source.tar.xz`,
+corresponding source offered alongside its binary. Build scripts: `packaging/`; release notes are in
+`packaging/release-notes.txt`.
+
+To release: check `gh release list` / `git tag`, bump `pyproject.toml` and `powerpdf.py VERSION`, run
+`uv lock`, update this handoff, commit/push main, then push `v<version>`. Watch with `gh run watch`.
+Run a manual workflow rehearsal before tagging if changing packaging. Never publish an un-smoked build.

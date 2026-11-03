@@ -1,0 +1,57 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - name: Read release version
+        id: version
+        run: |
+          $version = uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and project version differ' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - name: Run tests
+        run: uv run --frozen pytest -q
+      - name: Build one-folder runtime and installer
+        run: ./packaging/build-windows.ps1 -Version '${{ steps.version.outputs.version }}'
+      - name: Smoke installed commands, bundled runtimes, upgrade and uninstall
+        run: ./packaging/smoke-install.ps1 -Version '${{ steps.version.outputs.version }}'
+      - name: Retain tested release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: powerpdf-${{ steps.version.outputs.version }}-windows-x64
+          path: |
+            dist/powerpdf-${{ steps.version.outputs.version }}-windows-x64-setup.exe
+            dist/powerpdf-${{ steps.version.outputs.version }}-windows-x64.zip
+            dist/ghostscript-10.06.0-source.tar.xz
+          if-no-files-found: error
+      - name: Publish release only after smoke passes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$env:VERSION" `
+            "dist/powerpdf-$env:VERSION-windows-x64-setup.exe" `
+            "dist/powerpdf-$env:VERSION-windows-x64.zip" `
+            'dist/ghostscript-10.06.0-source.tar.xz' `
+            --verify-tag --title "PowerPDF $env:VERSION" --notes-file packaging/release-notes.txt

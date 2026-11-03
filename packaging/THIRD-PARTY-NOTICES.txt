@@ -1,0 +1,41 @@
+PowerPDF Windows runtime distribution
+====================================
+
+This distribution contains separate, unmodified command-line programs. PowerPDF
+invokes Ghostscript and Tesseract as external processes; their licenses apply to
+those programs independently. License texts are in the licenses directory.
+
+Ghostscript 10.06.0, Copyright Artifex Software, Inc.
+License: GNU Affero General Public License version 3 (AGPL-3.0).
+License text: licenses/Ghostscript-AGPL-3.0.txt and vendor/ghostscript/doc/COPYING.
+Binary: https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/tag/gs10060
+Corresponding source, including build instructions and third-party notices:
+https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10060/ghostscript-10.06.0.tar.xz
+The exact source archive is also offered, without additional charge, as
+'ghostscript-10.06.0-source.tar.xz' beside this installer in the PowerPDF release:
+https://github.com/janooh37-hue/powerpdf/releases
+Ghostscript's Resource, lib, iccprofiles and documentation are retained.
+
+Tesseract 5.5.0 (UB Mannheim Windows build 5.5.0.20241111).
+License: Apache License 2.0; licenses/Tesseract-Apache-2.0.txt.
+Source: https://github.com/tesseract-ocr/tesseract/tree/5.5.0
+Windows build/source instructions: https://github.com/UB-Mannheim/tesseract/wiki
+Pinned binary package: https://community.chocolatey.org/packages/tesseract/5.5.0.20241111
+Its dynamically linked runtime DLLs are shipped unchanged alongside the exe.
+Windows dependency build recipes and upstream source references:
+https://github.com/msys2/MINGW-packages
+https://packages.msys2.org/
+
+English, Arabic and orientation models: tessdata_fast 4.1.0, Apache License 2.0.
+License: licenses/Tessdata-Apache-2.0.txt.
+Source/data: https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
+
+fzf 0.67.0, Copyright Junegunn Choi. License: MIT; licenses/fzf-MIT.txt.
+Source: https://github.com/junegunn/fzf/tree/v0.67.0
+
+Ghostscript also includes app-local Microsoft Visual C++ runtime DLLs, redistributed
+under Microsoft's Visual Studio runtime distribution terms, not AGPL:
+https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/
+The Universal C Runtime is supplied by Windows 11 itself.
+
+Python and Python package license notices are retained in the PyInstaller bundle.
