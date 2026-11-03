@@ -171,8 +171,8 @@ Download **`powerpdf-<version>-windows-x64-setup.exe`** for a complete installat
   The CLIs are thin `.cmd` shims into the same frozen executable, without importing Textual for CLI work.
 - Start Menu shortcut launches in Windows Terminal if present, otherwise a normal console; desktop shortcut optional.
 - Add/Remove Programs uninstall removes the PATH entry. The fixed AppId upgrades an existing installation in place.
-- Includes **Ghostscript 10.06.0**, **Tesseract 5.5.0.20241111** plus `eng`, `ara`, `osd`
-  (`tessdata_fast` 4.1.0), and **fzf 0.67.0**. No extra runtime installations or PowerShell 7 are needed.
+- Includes **Ghostscript 10.08.0**, **Tesseract 5.5.0.20241111** plus `eng`, `ara`, `osd`
+  (`tessdata_fast` 4.1.0), and **fzf 0.74.4**. No extra runtime installations or PowerShell 7 are needed.
   Downloads are version-pinned and SHA-256 checked. Ghostscript includes its DLL, lib, Resource and ICC profiles.
 - `bin\licenses` and `bin\THIRD-PARTY-NOTICES.txt` contain licenses/source links: Ghostscript AGPL-3.0,
   Tesseract/models Apache-2.0, fzf MIT. The exact Ghostscript source archive is a separate release asset.
@@ -189,7 +189,7 @@ resolution and versions, OCR languages, generated-PDF compress/image/split/merge
 assets uploaded and the tag's release published. Actions logs contain the `SMOKE` evidence lines.
 
 Second asset: **`powerpdf-<version>-windows-x64.zip`**, the same complete runtime for portable use;
-extract the whole folder (no PATH/shortcuts automatically). Third: `ghostscript-10.06.0-source.tar.xz`,
+extract the whole folder (no PATH/shortcuts automatically). Third: `ghostscript-10.08.0-source.tar.xz`,
 corresponding source offered alongside its binary. Build scripts: `packaging/`; release notes are in
 `packaging/release-notes.txt`.
 

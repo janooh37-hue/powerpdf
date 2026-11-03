@@ -29,9 +29,9 @@ New-Item -ItemType Directory -Force $vendor, $licenses, 'build/downloads' | Out-
 $downloads = Join-Path $root 'build/downloads'
 
 # Official Artifex binary and corresponding source (also published alongside the installer).
-$gsRelease = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10060'
-Download "$gsRelease/gs10060w64.exe" "$downloads/ghostscript.exe" '8d552205c0fe87a16bac2f377c8a1b090cfcbc610db7c281bd6a646b39c9c468'
-Download "$gsRelease/ghostscript-10.06.0.tar.xz" "$root/dist/ghostscript-10.06.0-source.tar.xz" '64352648c2c081c8a9fb1a12dc1965e01ead7c57f58b72d1b54f6ef1cef3c561'
+$gsRelease = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080'
+Download "$gsRelease/gs10080w64.exe" "$downloads/ghostscript.exe" '52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50'
+Download "$gsRelease/ghostscript-10.08.0.tar.xz" "$root/dist/ghostscript-10.08.0-source.tar.xz" 'c20492bc8ebb96c87fa2e52a0926e1cda8cde95d66145e018ac713fed5da38cf'
 $gsHome = Join-Path $root 'build/ghostscript'
 Run-Installer "$downloads/ghostscript.exe" $gsHome
 New-Item -ItemType Directory -Force "$vendor/ghostscript" | Out-Null
@@ -64,9 +64,9 @@ foreach ($language in $models.Keys) {
 }
 Download 'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/LICENSE' "$licenses/Tessdata-Apache-2.0.txt" ''
 
-Download 'https://github.com/junegunn/fzf/releases/download/v0.67.0/fzf-0.67.0-windows_amd64.zip' "$downloads/fzf.zip" 'cad95326ed416d14226a03425513b049f5bc9a41f30a355e5fe204a29e666867'
+Download 'https://github.com/junegunn/fzf/releases/download/v0.74.4/fzf-0.74.4-windows_amd64.zip' "$downloads/fzf.zip" '5e63c0e798406fcb9c51a9fed4988398e25fdabf8c670e32c16caf7b4a7ed02d'
 Expand-Archive "$downloads/fzf.zip" "$vendor/fzf" -Force
-Download 'https://raw.githubusercontent.com/junegunn/fzf/v0.67.0/LICENSE' "$licenses/fzf-MIT.txt" ''
+Download 'https://raw.githubusercontent.com/junegunn/fzf/v0.74.4/LICENSE' "$licenses/fzf-MIT.txt" ''
 Copy-Item 'packaging/THIRD-PARTY-NOTICES.txt' $bin
 Copy-Item 'packaging/launch.ps1' $bin
 foreach ($command in @('split', 'merge', 'compress', 'image', 'print')) {

@@ -11,10 +11,10 @@ a Start Menu shortcut (Windows Terminal when available, normal console otherwise
 an optional desktop shortcut, Add/Remove Programs uninstall, and in-place upgrades.
 
 Bundled external runtimes:
-- Ghostscript 10.06.0: compression and Windows printing; AGPL-3.0.
+- Ghostscript 10.08.0: compression and Windows printing; AGPL-3.0.
 - Tesseract 5.5.0 / Windows build 5.5.0.20241111: card-name OCR; Apache-2.0.
 - tessdata_fast 4.1.0: English, Arabic and orientation models; Apache-2.0.
-- fzf 0.67.0: interactive print/file/printer selection; MIT.
+- fzf 0.74.4: interactive print/file/printer selection; MIT.
 
 License texts and source links are installed in bin\licenses and
 bin\THIRD-PARTY-NOTICES.txt. The Ghostscript corresponding-source archive is

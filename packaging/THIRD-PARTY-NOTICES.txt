@@ -5,14 +5,14 @@ This distribution contains separate, unmodified command-line programs. PowerPDF
 invokes Ghostscript and Tesseract as external processes; their licenses apply to
 those programs independently. License texts are in the licenses directory.
 
-Ghostscript 10.06.0, Copyright Artifex Software, Inc.
+Ghostscript 10.08.0, Copyright Artifex Software, Inc.
 License: GNU Affero General Public License version 3 (AGPL-3.0).
 License text: licenses/Ghostscript-AGPL-3.0.txt and vendor/ghostscript/doc/COPYING.
-Binary: https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/tag/gs10060
+Binary: https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/tag/gs10080
 Corresponding source, including build instructions and third-party notices:
-https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10060/ghostscript-10.06.0.tar.xz
+https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/ghostscript-10.08.0.tar.xz
 The exact source archive is also offered, without additional charge, as
-'ghostscript-10.06.0-source.tar.xz' beside this installer in the PowerPDF release:
+'ghostscript-10.08.0-source.tar.xz' beside this installer in the PowerPDF release:
 https://github.com/janooh37-hue/powerpdf/releases
 Ghostscript's Resource, lib, iccprofiles and documentation are retained.
 
@@ -30,8 +30,8 @@ English, Arabic and orientation models: tessdata_fast 4.1.0, Apache License 2.0.
 License: licenses/Tessdata-Apache-2.0.txt.
 Source/data: https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
 
-fzf 0.67.0, Copyright Junegunn Choi. License: MIT; licenses/fzf-MIT.txt.
-Source: https://github.com/junegunn/fzf/tree/v0.67.0
+fzf 0.74.4, Copyright Junegunn Choi. License: MIT; licenses/fzf-MIT.txt.
+Source: https://github.com/junegunn/fzf/tree/v0.74.4
 
 Ghostscript also includes app-local Microsoft Visual C++ runtime DLLs, redistributed
 under Microsoft's Visual Studio runtime distribution terms, not AGPL:
