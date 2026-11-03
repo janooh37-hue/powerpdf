@@ -45,6 +45,8 @@ def api():
     kernel.GetConsoleWindow.restype = wintypes.HWND
     kernel.GetStdHandle.argtypes = [wintypes.DWORD]
     kernel.GetStdHandle.restype = wintypes.HANDLE
+    kernel.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     return user, kernel
 
 
@@ -132,6 +134,11 @@ def session(args) -> int:
         state.update(exit_code=86, error="Native Python did not receive a real terminal")
         save_json(state_path, state)
         return 86
+    # Enable VT before textual_image probes; conhost otherwise prints the probes literally.
+    output_mode = wintypes.DWORD()
+    output_handle = kernel.GetStdHandle(-11)
+    if kernel.GetConsoleMode(output_handle, ctypes.byref(output_mode)):
+        kernel.SetConsoleMode(output_handle, output_mode.value | 0x0007)
     if args.scenario == "c":
         console_font(kernel, args.font)
         kernel.SetConsoleTitleW(f"PowerPDF C - plain conhost - POWERPDF_BIDI=on")
@@ -155,6 +162,7 @@ def session(args) -> int:
         def write(self, text):
             written = self.terminal.write(text)
             stream_log.write(text)
+            stream_log.flush()
             return written
 
         def flush(self):
@@ -267,14 +275,15 @@ def make_fixtures(output: Path) -> dict:
     from pypdf import PdfReader
 
     root = output / "fixtures"
-    folder = root / "المستندات العربية"
+    folder = root / "مستندات السيارات"
     folder.mkdir(parents=True, exist_ok=True)
     try:
         font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 42)
     except OSError:
         font = ImageFont.load_default(size=42)
-    names = ["01 رخصة المركبة.pdf", "02 بطاقة الهوية.pdf", "03 شهادة التأمين.pdf"]
-    names += [f"{i:02d} مستند عربي للمراجعة.pdf" for i in range(4, 23)]
+    names = ["رخصة المركبة.pdf", "شهادة 2026.pdf", "Ahmed عقد.pdf",
+             "تقرير الترخيص 2026 (2).pdf", "لا لالا.pdf"]
+    names += [f"{i:02d} مستند عربي للمراجعة.pdf" for i in range(1, 23)]
     for index, name in enumerate(names, 1):
         image = Image.new("RGB", (900, 1200), "#f3f0e9")
         draw = ImageDraw.Draw(image)
@@ -284,12 +293,13 @@ def make_fixtures(output: Path) -> dict:
         draw.text((90, 330), name.removesuffix(".pdf"), font=font, fill="#15383f")
         for y in range(460, 1000, 70):
             draw.line((95, y, 790, y), fill="#9bb4b7", width=3)
-        image.save(folder / name, "PDF", resolution=110)
+        image.save(root / name, "PDF", resolution=110)
         # Confirm fixtures are actual readable PDFs, not renamed image files.
-        if len(PdfReader(folder / name).pages) != 1:
+        if len(PdfReader(root / name).pages) != 1:
             raise RuntimeError(f"Invalid fixture: {name}")
-    return {"root": str(root), "folder": str(folder), "pdfs": [str(folder / name) for name in names],
-            "description": "22 genuine one-page PDFs created by Pillow; verified with pypdf"}
+    shutil.copyfile(root / names[0], folder / names[0])
+    return {"root": str(root), "folder": str(folder), "pdfs": [str(root / name) for name in names],
+            "description": "27 genuine one-page PDFs created by Pillow; requested samples plus Arabic cross-pane rows; nested PDF; verified with pypdf"}
 
 
 def locate_git() -> dict:
@@ -418,7 +428,20 @@ def launch(args, desktop: Desktop, git: dict, font: dict, fixtures: dict, letter
     desktop.user.ShowWindow(hwnd, 3)
     desktop.focus()
     desktop.user.SetCursorPos(width - 10, height - 10)
-    time.sleep(4)  # Import, initial rendering, and the actual app's timed splash.
+    # Never send text into import-time terminal probes; wait for the real UI to draw.
+    transcript = out / f"scenario-{letter}-terminal.log"
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        content = transcript.read_text(encoding="utf-8", errors="replace") if transcript.exists() else ""
+        if "Activity" in content and "Queue" in content:
+            break
+        if state.exists() and "exit_code" in json.loads(state.read_text(encoding="utf-8")):
+            raise RuntimeError(f"Scenario {letter}: app exited before rendering; inspect session/error log")
+        time.sleep(0.25)
+    else:
+        desktop.screenshot(f"scenario-{letter}-startup-timeout")
+        raise RuntimeError(f"Scenario {letter}: no rendered app UI after 45 seconds")
+    time.sleep(2)  # Let the real timed splash close before desktop input.
     desktop.event("terminal-launched", process_pid=process.pid, session_pid=session_state["pid"], hwnd=hwnd,
                   strategy=strategy, windows=windows(desktop.user), tty=session_state)
     return process, state
@@ -433,7 +456,7 @@ def ffmpeg_filter(letter: str, width: int, height: int, font_path: str) -> str:
     base = f"fontfile='{escaped_font}':fontcolor=white:fontsize=27:x=24"
     result = f"pad=iw:ih+84:0:84:color=0x111820,drawtext={base}:y=10:text='{label}'"
     phases = [(0, 3, "REAL WINDOWS DESKTOP CAPTURE - same fixtures and keys in all scenarios"),
-              (3, 9, "Navigate to Arabic folder using real Unicode keyboard input"),
+              (3, 9, "Navigate real Arabic folders and PDF names with desktop arrow keys"),
               (9, 19, "Queue 3 real PDFs - Arabic in tree and queue across the same rows"),
               (19, 23, "Recent tab - seeded logical paths to existing PDFs; no PDF viewer launched"),
               (23, 32, "F2 rename - type Arabic via SendInput; Esc cancels; q exits")]
@@ -469,18 +492,16 @@ def record_scenario(args, desktop: Desktop, git: dict, font: dict, fixtures: dic
         desktop.screenshot(f"scenario-{letter}-title")
         desktop.at(3)
         desktop.focus()
-        desktop.event("main", action="g / Ctrl+A / Unicode folder path / Enter")
-        desktop.text("g")
-        time.sleep(0.5)
-        desktop.key(0x41, ctrl=True)
-        desktop.text(fixtures["folder"], delay=0.004)
-        desktop.key(0x0D)
+        desktop.event("main", action="Home / Right / Down / Down; real tree navigation")
+        desktop.key(0x24)  # Home: root.
+        desktop.key(0x27)  # Right: expand root if needed.
+        desktop.key(0x28)  # Arabic child folder.
+        desktop.at(5)
+        desktop.key(0x28)  # First PDF after directory.
         desktop.at(7)
-        # DirectoryTree starts at its expanded root; Home/Right make this independent of previous focus.
-        desktop.key(0x24)  # Home
-        desktop.key(0x27)  # Right expands root if needed.
-        desktop.key(0x28)  # First PDF.
+        desktop.focus()
         desktop.at(9)
+        desktop.focus()
         for index in range(3):
             desktop.key(0x20)
             if index < 2:
@@ -493,13 +514,15 @@ def record_scenario(args, desktop: Desktop, git: dict, font: dict, fixtures: dic
         # 22 real Arabic names keep the tree populated at the Queue panel's vertical position.
         desktop.key(0x28)
         desktop.key(0x26)
+        desktop.focus()
         desktop.at(19)
-        desktop.text("r")
+        desktop.key(ord("R"))
         desktop.event("recent", note="Three existing logical PDF paths seeded in isolated APPDATA settings")
         desktop.at(21)
         desktop.screenshot(f"scenario-{letter}-recent")
         desktop.at(23)
-        desktop.text("r")
+        desktop.focus()
+        desktop.key(ord("R"))
         time.sleep(0.3)
         desktop.key(0x71)  # F2
         desktop.event("rename", action="F2 on highlighted PDF")
@@ -514,7 +537,8 @@ def record_scenario(args, desktop: Desktop, git: dict, font: dict, fixtures: dic
         desktop.key(0x1B)
         desktop.event("rename-cancelled", action="Escape cancels rename; app quit binding is q, not Escape")
         time.sleep(0.4)
-        desktop.text("q")
+        desktop.focus()
+        desktop.key(ord("Q"))
         desktop.event("quit", action="q")
         recorder.wait(timeout=35)
         result["ffmpeg_exit_code"] = recorder.returncode
