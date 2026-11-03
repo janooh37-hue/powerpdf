@@ -121,3 +121,16 @@ uv run --frozen pytest -q
 The skipped cases require Windows ACLs or Ghostscript. Focused tests cover exact LTR logical→visual strings, ASCII/non-Arabic passthrough, nested/multiple paired brackets and numeric context, mixed Latin, lam-alef width, path segmentation, toggle/detection, logical tree node/Option IDs, logical rename Input, actual renamed files and settings identity. Before/after PNGs were regenerated and personally re-inspected for the follow-up; `.pdf` is on the right and `(2)` stays correct. Local test results are Linux-only. The Windows manual workflow evidence is recorded below separately; an installer build/smoke run does not establish Arabic rendering on the owner's actual terminal/font.
 
 **Estimated effort to ship a stable 0.7.1: 2–4 focused engineering days after the owner can test**, excluding waiting for access/feedback: owner WT/font validation/policy; RTL-aware logical truncation and usable rename display; dependency/license notices, packaging/rehearsal and regression cases. This is an estimate. If actual WT fallback cannot draw connected forms acceptably, do not market this as solving Arabic rendering. The follow-up publishes only a **branch test artifact** at version `0.7.1.dev0` using manual workflow dispatch; it creates no tag or GitHub release.
+
+## Windows branch installer
+
+Manual workflow dispatch: [Windows release run 41685771260](https://github.com/janooh37-hue/powerpdf/actions/runs/41685771260), building implementation commit `d13e59b` on `spike/arabic-rtl`. Version is `0.7.1.dev0` in the project, app and lockfile. This branch was pushed explicitly for the requested owner test; no tag or GitHub release was created. The workflow's publish step remains tag-only.
+
+**Result: green.** Watched the run through completion: Windows tests, one-folder build/installer, installed-command/bundled-runtime/upgrade/uninstall smoke checks, and artifact upload all passed. The tag-only publication step was skipped. Job duration: 5m50s.
+
+- Download from the run's Artifacts section: [`powerpdf-0.7.1.dev0-windows-x64`](https://github.com/janooh37-hue/powerpdf/actions/runs/41685771260/artifacts/13254764381).
+- Uploaded artifact size (GitHub API): **360,228,754 bytes** (about 360.2 MB / 343.5 MiB), not expired when queried.
+- Artifact contains `powerpdf-0.7.1.dev0-windows-x64-setup.exe`, `powerpdf-0.7.1.dev0-windows-x64.zip`, and the Ghostscript source archive. The reported size is the uploaded artifact container, **not** the individual installer.
+- An exact copy of this report is also left at `/tmp/rtl/RTL-SPIKE.md`.
+
+The successful Windows workflow validates the branch installer build and automated smoke scenarios. It still does **not** prove Arabic appearance, font fallback, or rename editing in the owner's interactive Windows Terminal.
