@@ -13,11 +13,12 @@ function Run-Installer([string] $File, [string] $Destination) {
     if ($process.ExitCode -ne 0) { throw "Dependency installation failed: $File ($($process.ExitCode))" }
 }
 
+$printScript = (Resolve-Path 'pdf_print.ps1').Path
 uv run --frozen --with pyinstaller==6.17.0 pyinstaller powerpdf_cli.py --onedir --name powerpdf --console --noconfirm --clean `
     --specpath build --workpath build --distpath dist --collect-submodules textual --collect-data textual `
     --hidden-import powerpdf --hidden-import pdf_merge --hidden-import pdf_split --hidden-import pdf_card `
     --hidden-import pdf_compress --hidden-import pdf_image --hidden-import pdf_runtime --copy-metadata powerpdf `
-    --add-data 'pdf_print.ps1;.'
+    --add-data "${printScript};."
 if ($LASTEXITCODE) { throw 'PyInstaller failed' }
 
 $root = (Get-Location).Path
