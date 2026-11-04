@@ -180,6 +180,12 @@ class PreviewPane(QWidget):
     status_label. Source paths retain their logical spelling, not resolve().
     shutdown() is idempotent and permanently stops this pane's worker; it waits
     for an in-flight native call, which cannot be forcibly interrupted safely.
+    set_page() uses zero-based indices. zoom_mode is "page", "width", or None
+    for a custom zoom; zoom_mode_changed reports user/programmatic mode changes,
+    not the independent scale calculations needed to fit different page sizes.
+    normalized_pan is each scrollbar's fraction of its available travel (0.5
+    when that axis fits). pan_changed reports scrolling/dragging, not layout or
+    programmatic synchronization, so two panes can link without feedback loops.
     """
 
     info_ready = Signal(object, object)
@@ -187,6 +193,8 @@ class PreviewPane(QWidget):
     error = Signal(str)
     page_changed = Signal(int)
     zoom_changed = Signal(float)
+    zoom_mode_changed = Signal(object)
+    pan_changed = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -202,6 +210,8 @@ class PreviewPane(QWidget):
         self._image = QImage()
         self._center_next = True
         self._last_render_scale = 0.0
+        self._pan_blocked = False
+        self._pending_pan: tuple[float, float] | None = None
 
         self.title_label = QLabel("No document selected", self)
         self.title_label.setObjectName("previewTitle")
@@ -229,6 +239,8 @@ class PreviewPane(QWidget):
         self._item = QGraphicsPixmapItem()
         self._scene.addItem(self._item)
         self.view.viewport().installEventFilter(self)
+        self.view.horizontalScrollBar().valueChanged.connect(self._scroll_changed)
+        self.view.verticalScrollBar().valueChanged.connect(self._scroll_changed)
 
         self.previous_button = self._button("Previous", "Previous page", self.previous_page)
         self.next_button = self._button("Next", "Next page", self.next_page)
@@ -264,6 +276,11 @@ class PreviewPane(QWidget):
         ):
             zoom_controls.addWidget(widget)
         zoom_controls.addStretch()
+        self._control_widgets = (
+            self.previous_button, self.page_spin, self.page_total, self.next_button,
+            self.zoom_out_button, self.zoom_label, self.zoom_in_button,
+            self.fit_page_button, self.fit_width_button,
+        )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(10)
@@ -316,6 +333,50 @@ class PreviewPane(QWidget):
     def zoom(self) -> float:
         return self._zoom
 
+    @property
+    def zoom_mode(self) -> str | None:
+        return self._fit
+
+    @property
+    def normalized_pan(self) -> tuple[float, float]:
+        values = []
+        for bar in (self.view.horizontalScrollBar(), self.view.verticalScrollBar()):
+            travel = bar.maximum() - bar.minimum()
+            values.append((bar.value() - bar.minimum()) / travel if travel else 0.5)
+        return values[0], values[1]
+
+    def set_controls_visible(self, visible: bool) -> None:
+        """Let a containing workspace supply one shared navigation toolbar."""
+        for widget in self._control_widgets:
+            widget.setVisible(visible)
+
+    def set_normalized_pan(self, x: float, y: float) -> None:
+        """Set linked scroll travel; retain it through an in-flight raster."""
+        if self._closed:
+            return
+        if not all(math.isfinite(value) for value in (x, y)):
+            raise ValueError("Pan coordinates must be finite")
+        self._pending_pan = min(1.0, max(0.0, x)), min(1.0, max(0.0, y))
+        if not self._image.isNull():
+            self._apply_pan(self._pending_pan)
+
+    def _apply_pan(self, pan: tuple[float, float]) -> None:
+        blocked = self._pan_blocked
+        self._pan_blocked = True
+        try:
+            for bar, fraction in zip(
+                (self.view.horizontalScrollBar(), self.view.verticalScrollBar()), pan
+            ):
+                bar.setValue(round(bar.minimum() + fraction * (bar.maximum() - bar.minimum())))
+        finally:
+            self._pan_blocked = blocked
+
+    def _scroll_changed(self, _value: int) -> None:
+        if self._closed or self._pan_blocked or self._center_next or self._image.isNull():
+            return
+        self._pending_pan = self.normalized_pan
+        self.pan_changed.emit(*self._pending_pan)
+
     def _invalidate(self) -> None:
         self._timer.stop()
         self._serial += 1
@@ -352,6 +413,7 @@ class PreviewPane(QWidget):
         self._worker.submit(_Request(self._serial, None))
 
     def _clear_image(self) -> None:
+        self._pending_pan = None
         self._image = QImage()
         self._item.setPixmap(QPixmap())
         self._scene.setSceneRect(QRectF())
@@ -392,7 +454,10 @@ class PreviewPane(QWidget):
 
     @Slot(int)
     def _select_page(self, number: int) -> None:
-        page = number - 1
+        self.set_page(number - 1)
+
+    @Slot(int)
+    def set_page(self, page: int) -> None:
         if self._closed or not 0 <= page < self.page_count or page == self._page:
             return
         self._page = page
@@ -411,21 +476,30 @@ class PreviewPane(QWidget):
     def next_page(self) -> None:
         self._select_page(self._page + 2)
 
-    def _set_zoom(self, zoom: float) -> None:
+    @Slot(float)
+    def set_zoom(self, zoom: float) -> None:
         if self._closed or not self.page_count:
             return
+        if not math.isfinite(zoom):
+            raise ValueError("Zoom must be finite")
+        zoom = min(16.0, max(0.05, zoom))
+        if self._fit is None and zoom == self._zoom:
+            return
+        changed_mode = self._fit is not None
         self._fit = None
-        self._zoom = min(16.0, max(0.05, zoom))
+        self._zoom = zoom
+        if changed_mode:
+            self.zoom_mode_changed.emit(None)
         self._apply_transform()
         self._schedule_render()
 
     @Slot()
     def zoom_in(self) -> None:
-        self._set_zoom(self._zoom * 1.25)
+        self.set_zoom(self._zoom * 1.25)
 
     @Slot()
     def zoom_out(self) -> None:
-        self._set_zoom(self._zoom / 1.25)
+        self.set_zoom(self._zoom / 1.25)
 
     @Slot()
     def fit_page(self) -> None:
@@ -440,12 +514,21 @@ class PreviewPane(QWidget):
             return
         self._fit = fit
         self._center_next = True
+        self._pending_pan = None
+        self.zoom_mode_changed.emit(fit)
         self._schedule_render()
 
     def _apply_transform(self) -> None:
-        self.view.setTransform(QTransform.fromScale(
-            self._zoom * POINTS_TO_DIP, self._zoom * POINTS_TO_DIP
-        ))
+        pan = self._pending_pan or self.normalized_pan
+        self._pan_blocked = True
+        try:
+            self.view.setTransform(QTransform.fromScale(
+                self._zoom * POINTS_TO_DIP, self._zoom * POINTS_TO_DIP
+            ))
+            if not self._center_next:
+                self._apply_pan(pan)
+        finally:
+            self._pan_blocked = False
         self.zoom_label.setText(f"{self._zoom * 100:.0f}%")
         self.zoom_changed.emit(self._zoom)
 
@@ -487,13 +570,19 @@ class PreviewPane(QWidget):
             return
         self._image = image
         self._last_render_scale = scale
-        self._item.setPixmap(QPixmap.fromImage(image))
-        self._item.setScale(1 / scale)
-        width, height = self._info.page_sizes[page]
-        self._scene.setSceneRect(QRectF(0, 0, width, height))
-        if self._center_next:
-            self.view.centerOn(width / 2, height / 2)
-            self._center_next = False
+        self._pan_blocked = True
+        try:
+            self._item.setPixmap(QPixmap.fromImage(image))
+            self._item.setScale(1 / scale)
+            width, height = self._info.page_sizes[page]
+            self._scene.setSceneRect(QRectF(0, 0, width, height))
+            if self._center_next:
+                self.view.centerOn(width / 2, height / 2)
+                self._center_next = False
+            if self._pending_pan is not None:
+                self._apply_pan(self._pending_pan)
+        finally:
+            self._pan_blocked = False
         message = f"Page {page + 1} of {self.page_count} · {self._zoom * 100:.0f}%"
         if limited:
             message += (
