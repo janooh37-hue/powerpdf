@@ -84,8 +84,11 @@ def macos_helpers() -> None:
                 "-Dlzma=OFF", "-Dzstd=OFF", "-Dwebp=OFF", "-Dlibdeflate=OFF",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
     lept = source("leptonica")
+    # libtiff 4.7's static config omits its CMath imported target. Use CMake's
+    # stock FindTIFF module and the explicit static library instead.
     cmake_build("leptonica", lept, prefix, "-DBUILD_PROG=OFF", "-DENABLE_GIF=OFF", "-DENABLE_JPEG=OFF",
                 "-DENABLE_TIFF=ON", "-DENABLE_WEBP=OFF", "-DENABLE_OPENJPEG=OFF",
+                f"-DCMAKE_IGNORE_PATH={prefix}/lib/cmake/tiff",
                 f"-DTIFF_LIBRARY={prefix}/lib/libtiff.a", f"-DTIFF_INCLUDE_DIR={prefix}/include",
                 f"-DPNG_LIBRARY={prefix}/lib/libpng.a", f"-DPNG_PNG_INCLUDE_DIR={prefix}/include",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
