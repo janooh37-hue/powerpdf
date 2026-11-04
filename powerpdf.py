@@ -32,7 +32,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from pdf_runtime import resolve_tool, helper_env, host_env
+from pdf_runtime import resolve_tool, helper_env, host_env, helper_launch_scope, host_launch_scope
 from powerpdf_core import files, render, settings as core_settings
 from powerpdf_core.workspace import Workspace
 from typing import TYPE_CHECKING
@@ -137,27 +137,37 @@ def list_printers() -> list[str]:
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
         "Get-CimInstance Win32_Printer | Sort-Object { -not $_.Default } | ForEach-Object Name"
     )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
-        capture_output=True, text=True, encoding="utf-8", check=True, env=host_env(),
-    )
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    with host_launch_scope():
+        process = subprocess.Popen(
+            ["powershell", "-NoProfile", "-Command", script],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", env=host_env(),
+        )
+    with process:
+        stdout, stderr = process.communicate()
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
+    return [line for line in stdout.splitlines() if line.strip()]
 
 
 def print_pdf(path: Path, printer: str, timeout: float = 300) -> bool:
     """Print through Ghostscript's Windows printer device; True on success.
 
     Ghostscript waits forever on a printer that doesn't exist, hence the timeout."""
-    try:
-        executable = resolve_tool("ghostscript") or "gswin64c"
-        result = subprocess.run(
+    executable = resolve_tool("ghostscript") or "gswin64c"
+    with helper_launch_scope():
+        process = subprocess.Popen(
             [executable, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dNoCancel",
              "-sDEVICE=mswinpr2", f"-sOutputFile=%printer%{printer}", str(path)],
-            capture_output=True, timeout=timeout, env=helper_env(executable),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=helper_env(executable),
         )
-    except subprocess.TimeoutExpired:
-        return False
-    return result.returncode == 0
+    with process:
+        try:
+            process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            return False
+    return process.returncode == 0
 
 
 def output_checks(inputs: list[Path]) -> tuple[Callable[[str], str | None], Callable[[str], str | None]]:
@@ -1417,7 +1427,8 @@ class PowerPDF(App):
             self.go_to(path)
             return
         try:
-            os.startfile(path)  # Windows: the file's default app
+            with host_launch_scope():
+                os.startfile(path)  # Windows: the file's default app
         except OSError as error:
             self.notify(f"Can't open {path.name}: {error}", severity="error")
             return
@@ -1426,7 +1437,8 @@ class PowerPDF(App):
 
     def action_reveal(self) -> None:
         if path := self.focused_path():
-            subprocess.Popen(["explorer", "/select,", str(path)], env=host_env())
+            with host_launch_scope():
+                subprocess.Popen(["explorer", "/select,", str(path)], env=host_env())
 
     def action_rename(self) -> None:
         path = self.focused_path()

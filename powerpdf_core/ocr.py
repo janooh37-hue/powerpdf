@@ -61,8 +61,10 @@ def read_text(card: Image.Image, scale: float, ink: int, *, executable: str, dat
     if data_dir is not None:
         args += ["--tessdata-dir", str(data_dir)]
     import time
-    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          env=environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as process:
+    with pdf_runtime.helper_launch_scope():
+        process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env=environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    with process:
         deadline = time.monotonic() + 60
         data = png.getvalue()
         try:

@@ -8,7 +8,7 @@ import sys
 from importlib.metadata import version
 from pathlib import Path
 
-from pdf_runtime import host_env
+from pdf_runtime import host_env, host_launch_scope
 
 
 def main() -> int | None:
@@ -26,8 +26,10 @@ def main() -> int | None:
         sys.argv = [f"pdf{command}", *args[2:]]
         if command == "print":
             script = Path(__file__).with_name("pdf_print.ps1")
-            return subprocess.call(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                                    "-File", str(script), *args[2:]], env=host_env())
+            with host_launch_scope():
+                process = subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                            "-File", str(script), *args[2:]], env=host_env())
+            return process.wait()
         if command in ("split", "merge", "compress", "image"):
             return importlib.import_module(f"pdf_{command}").main()
         raise SystemExit(f"Unknown PowerPDF command: {command}")

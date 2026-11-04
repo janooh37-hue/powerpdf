@@ -29,11 +29,12 @@ A4_LONG_SIDE = 842 / 72
 def run_gs(gs: str, *args: str, cancel: CancelToken | None = None) -> None:
     if cancel is not None:
         cancel.raise_if_cancelled()
-    process = subprocess.Popen(
-        [gs, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", *args],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-        env=pdf_runtime.helper_env(gs),
-    )
+    with pdf_runtime.helper_launch_scope():
+        process = subprocess.Popen(
+            [gs, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", *args],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+            env=pdf_runtime.helper_env(gs),
+        )
     try:
         while True:
             try:
