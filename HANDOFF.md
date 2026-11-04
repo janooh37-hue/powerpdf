@@ -61,7 +61,8 @@ No print job was submitted. Native desktop/bundle and Windows ACL qualification
 remain platform acceptance work; headless tests do not establish those results.
 
 Phases 2 and 3 were approved for the native shell and bulk workflows below.
-Phase 4 (cards) and Phase 5 (pages/compare) still require separate owner approval.
+The owner also approved Phase 4 (cards) and Phase 5 (pages/compare), in that order,
+with a commit/push per phase and a combined report after both.
 The TUI/CLI Windows print commands remain available independently of the GUI's
 Qt print adapter; never send test jobs to the SHARP.
 The parallel `gui-packaging` engineer owns runtime discovery, `packaging/` and
@@ -222,6 +223,59 @@ for Qt's wrapped status label to finish layout; its focused screenshot test also
 passed after this assertion was added. Bulk results contain real output paths
 and bytes, not simulated operations. Printing evidence is explicit PDF output,
 not proof of native printer drivers, duplex hardware or paper delivery.
+
+
+## Card workspace — Phase 4
+
+`Operations → Card workspace` (`k`) captures queue-or-highlight targets before
+loading the first 12 pages through the shared renderer/detector in a worker.
+The workspace is a separate dialog: source scan map, front/back views, numbered
+strip, provenance, kept/skipped counts and guessed-side warnings. Pairing is
+positional, not an automatic front/back identity claim.
+
+Editing uses the shared `CardEditSession`: source-coordinate crop handles,
+precise geometry fields, keyboard nudges, tilt/rotation, and editable black-box
+overlays. Box geometry follows crop changes through core `carry()`. The saved
+images burn boxes into pixels with 8-pixel JPEG-block expansion and 4:4:4 when
+masked; hidden original scan content is not retained beneath them.
+One mouse gesture is one undo entry; numeric/key edits also support undo/redo.
+Crop allocations are rejected before OpenCV at 32 million pixels or 32766 pixels
+per side; fields expose the same bounds and rejected drags leave state unchanged.
+The map background is cached by shared scan-array identity; ordinary nudges
+repaint overlays/cropped sides rather than reconverting a full scan.
+
+Naming uses the same application-direction native Arabic editor as filenames.
+Confirmed names are distinct from revision-tagged OCR suggestions; only explicit
+confirmation changes output filenames. Local Tesseract discovery/environment/DLL
+scope remain in `pdf_runtime` through `powerpdf_core.ocr`, with one thread per
+child and a process-wide maximum of four card tasks across open workspaces.
+Newest-first label history is shared through the settings store.
+
+Save choices cover the current two-sided PDF/JPG pair, current-side PDF/JPG,
+kept-card PDF/JPG folders, and a combined PDF with per-card bookmarks. Quick Save
+reviews defaults; Save As uses native destination selection, then the same exact
+output review and safe overwrite confirmation. Workers export immutable geometry
+snapshots, reserve reviewed destinations, check source/destination revisions and
+report actual partial commits. Closing an unsaved workspace asks before discard;
+declining also aborts closing its main browser window.
+
+The generated `gui_test_fixtures.multi_card_scan` is a local two-page A4,
+four-row-per-page, left-back/right-front vector scan with eight synthetic vehicle
+licenses. No owner documents or personal data are used in automated captures.
+Packaging adds `powerpdf_gui.cards` and `powerpdf_gui.card_canvas`; existing
+QtCore/QtGui/QtWidgets plus core OpenCV/Pillow/OCR dependencies are reused.
+
+Phase 4 acceptance on Linux:
+`QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**311 passed, 4 skipped in 102.61s**. The four skips remain unchanged.
+The real local Tesseract queue and explicit-confirmation path were exercised,
+including the shared four-task budget across independent workspaces. After
+enabling real OCR for the capture itself, its focused test also passed
+(**1 passed in 2.74s**). Inspected `/tmp/gui/cards-workspace.png` and
+`/tmp/gui/cards-save-result.png`: eight cards, unconfirmed suggestions, a manually
+confirmed Arabic name, skipped/guessed markers, a burned-box preview and an actual
+combined-PDF receipt. Tests read actual JPEG/PDF pixels, 4:4:4 encoding, page
+sizes, metadata and named bookmarks; native file dialogs remain adapter-mocked.
 
 
 
