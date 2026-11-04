@@ -59,7 +59,7 @@ def test_real_unicode_document_info_and_owned_image(qtbot, pane, source):
     pane.info_ready.connect(lambda path, info: infos.append((path, info)))
     open_ready(qtbot, pane, source)
     assert pane.source_path == source
-    assert pane.title_label.text() == source.name
+    assert pane.title_label.text() == "\u2066" + source.name + "\u2069"
     assert pane.page_count == 3
     assert pane.page_index == 0
     assert infos[0][0] == source

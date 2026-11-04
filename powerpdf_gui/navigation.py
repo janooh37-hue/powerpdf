@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .text import FilenameEdit
 
 
 def _local_paths(event) -> list[Path]:
@@ -103,7 +104,7 @@ class FileBrowser(QWidget):
         self.tree.selectionModel().currentChanged.connect(self._select)
         self.proxy.rowsInserted.connect(self._apply_pending_selection)
 
-        self.path_edit = QLineEdit(self)
+        self.path_edit = FilenameEdit(parent=self)
         self.path_edit.setAccessibleName("Folder path")
         self.path_edit.returnPressed.connect(self._go_to_path)
         def folder_button(name, icon, callback):

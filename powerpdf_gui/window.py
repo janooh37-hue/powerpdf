@@ -20,6 +20,7 @@ from powerpdf_core.settings import SettingsStore
 from powerpdf_core.workspace import Workspace
 from . import desktop, resources, themes
 from .navigation import FileBrowser, QueueList, RecentList
+from .text import FilenameEdit, filename_text
 from .preview import PreviewPane
 
 
@@ -51,11 +52,12 @@ class RenameDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)
-        title = plain_label(f"Rename {path.name}")
+        title = plain_label(f"Rename {filename_text(path.name)}")
         title.setProperty("role", "title")
         layout.addWidget(title)
         label = QLabel("New name")
-        self.name_input = QLineEdit(path.name)
+        self.name_input = FilenameEdit(path.name)
+        self.name_input.setLayoutDirection(QApplication.layoutDirection())
         self.name_input.setObjectName("renameInput")
         self.name_input.setAccessibleName("New file or folder name")
         label.setBuddy(self.name_input)
@@ -72,7 +74,7 @@ class RenameDialog(QDialog):
         layout.addWidget(self.buttons)
         self.name_input.textChanged.connect(self.validate)
         self.validate()
-        self.name_input.selectAll()
+        self.name_input.setSelection(0, len(path.stem) if path.is_file() else len(path.name))
 
     def validate(self):
         error = files.rename_error(self.path, self.name_input.text())
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
         self.root = candidate.resolve() if candidate.is_dir() else Path.home()
         self.selected: Path | None = None
         self._closing = False
+        self._operation_dialogs = []
         self.theme_name = gui.get("theme", self.settings.get("theme", "powerpdf"))
         app = QApplication.instance()
         self._folder_changed(self.root)
@@ -291,6 +294,10 @@ class MainWindow(QMainWindow):
         queue.addAction("Move selected up", lambda: self.queue_list.move_selected(-1))
         queue.addAction("Move selected down", lambda: self.queue_list.move_selected(1))
         queue.addAction("Remove selected", self.queue_list.remove_selected)
+        operations = self.menuBar().addMenu("&Operations")
+        for key, label in (("merge", "Merge…"), ("split", "Split…"), ("compress", "Compress…"), ("images", "Images…"), ("print", "Print…")):
+            operations.addAction(a(key, label, lambda checked=False, key=key: self.launch_operation(key),
+                                   QKeySequence.StandardKey.Print if key == "print" else None))
         view = self.menuBar().addMenu("&View")
         view.addAction(a("all_files", "Show all files", self.toggle_all_files, checkable=True))
         view.addSeparator()
@@ -378,8 +385,8 @@ class MainWindow(QMainWindow):
 
     def _folder_changed(self, folder):
         self.root = Path(folder)
-        self.setWindowTitle(f"PowerPDF — {self.root.name or self.root}")
-        self.statusBar().showMessage(str(self.root))
+        self.setWindowTitle(f"PowerPDF — {filename_text(self.root.name or self.root)}")
+        self.statusBar().showMessage(filename_text(self.root))
 
     def navigate(self, folder: Path):
         try:
@@ -402,6 +409,45 @@ class MainWindow(QMainWindow):
             self.show_path(pdfs[0])
         if folders:
             self.navigate(folders[-1])
+
+    def launch_operation(self, action):
+        targets = list(self.workspace.queue) if action == "merge" else self.workspace.targets(self.selected)
+        if not targets or action == "merge" and len(targets) < 2:
+            QMessageBox.information(self, "Select PDFs", "Queue at least two PDFs to merge." if action == "merge" else "Select or queue a PDF first.")
+            return
+        if action == "print":
+            from .printing import PrintDialog
+            dialog = PrintDialog(targets, self)
+            dialog.completed.connect(self._print_completed)
+        else:
+            from .operations import OperationDialog
+            dialog = OperationDialog(action, targets, self)
+            dialog.completed.connect(self._operation_completed)
+        self._operation_dialogs.append(dialog)
+        dialog.finished.connect(lambda result, dialog=dialog: self._operation_dialogs.remove(dialog) if dialog in self._operation_dialogs else None)
+        dialog.show()
+
+    def _operation_completed(self, result):
+        if self._closing:
+            return
+        for outcome in result.outcomes:
+            if outcome.outputs:
+                self.log(f"{len(outcome.outputs)} output(s): " + ", ".join(path.name for path in outcome.outputs))
+            if outcome.error:
+                self.log(f"{outcome.status}: {outcome.error}")
+        if result.cancelled:
+            self.log("Operation canceled. Completed outputs are retained.")
+        self.workspace.remember(*result.outputs)
+        self._persist_recent()
+        self.refresh_lists()
+        self.browser.refresh()
+
+    def _print_completed(self, result):
+        if not self._closing:
+            self.log(f"Print job: {result.submitted_pages}/{result.total_pages} pages submitted"
+                     + (" · canceled" if result.cancelled else "")
+                     + (f" · {result.error}" if result.error else "")
+                     + ". Submission is not confirmation of physical printing.")
 
     def open_files_dialog(self):
         names, _ = QFileDialog.getOpenFileNames(self, "Open PDF files", str(self.root), "PDF documents (*.pdf *.PDF);;All files (*)")
@@ -444,8 +490,8 @@ class MainWindow(QMainWindow):
             self._show_folder_info(path)
 
     def _set_info(self, path: Path, rows=()):
-        self.info_name.setText(path.name or str(path))
-        self.info_path.setText(str(path.parent))
+        self.info_name.setText(filename_text(path.name or str(path)))
+        self.info_path.setText(filename_text(path.parent))
         while self.info_form.rowCount():
             self.info_form.removeRow(0)
         for key, value in rows:
@@ -692,6 +738,11 @@ class MainWindow(QMainWindow):
                 self.trash_selected()
             return True
         mapping = {
+            Qt.Key.Key_M: lambda: self.launch_operation("merge"),
+            Qt.Key.Key_S: lambda: self.launch_operation("split"),
+            Qt.Key.Key_C: lambda: self.launch_operation("compress"),
+            Qt.Key.Key_I: lambda: self.launch_operation("images"),
+            Qt.Key.Key_P: lambda: self.launch_operation("print"),
             Qt.Key.Key_Space: self.toggle_queued, Qt.Key.Key_O: self.open_selected,
             Qt.Key.Key_R: self.toggle_recent, Qt.Key.Key_G: self.go_to_folder,
             Qt.Key.Key_E: self.reveal_selected, Qt.Key.Key_A: self.queue_folder,
@@ -727,6 +778,8 @@ class MainWindow(QMainWindow):
             "A — queue folder     X — clear queue     R — recent\n"
             "E — reveal     F2 — rename     Delete — Trash / remove queue entry\n"
             "[ / ] — page flip     F — all files     Q — quit\n\n"
+            "M — merge     S — split     C — compress     I — images     P — print\n"
+            "Ctrl/Cmd+P — print dialog (never automatically submits)\n\n"
             "Ctrl/Cmd+O — open PDFs     Ctrl+Shift+O — open folder\n"
             "Ctrl+L — go to folder     Ctrl+R — refresh     Ctrl+T — theme\n"
             "Ctrl+0 — fit page     Ctrl+1 — fit width     Ctrl++ / − — zoom\n"
@@ -761,8 +814,8 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def log(self, message):
-        self.activity.appendPlainText(str(message))
-        self.statusBar().showMessage(str(message), 8000)
+        self.activity.appendPlainText(filename_text(message))
+        self.statusBar().showMessage(filename_text(message), 8000)
 
     def report_error(self, title, error):
         self.log(f"{title}: {error}")
@@ -770,6 +823,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
+        for dialog in list(self._operation_dialogs):
+            dialog.shutdown()
+            dialog.close()
         QApplication.instance().removeEventFilter(self)
         self.preview.shutdown()
         try:

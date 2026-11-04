@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from powerpdf_core.render import DocumentInfo, RenderSession
+from .text import filename_text
 
 # At most 48 MB of four-byte pixels per screen raster, before transfer/display
 # copies. This is a screen-preview policy, not the core's export resolution.
@@ -331,7 +332,7 @@ class PreviewPane(QWidget):
         self._fit = "page"
         self._center_next = True
         self._clear_image()
-        self.title_label.setText(self._path.name)
+        self.title_label.setText(filename_text(self._path.name))
         self.status_label.setText("Opening document…")
         self._update_controls()
         self._worker.submit(_Request(self._serial, self._path))

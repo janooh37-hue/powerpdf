@@ -54,7 +54,7 @@ def preview(qtbot, window, path):
 def test_real_preview_info_recent_and_queue_keyboard(qtbot, window, documents):
     path = documents / NAMES[0]
     preview(qtbot, window, path)
-    assert window.info_name.text() == path.name
+    assert window.info_name.text() == "\u2066" + path.name + "\u2069"
     assert window.findChild(QLabel, "infoPages").text() == "2"
     assert window.findChild(QLabel, "infoTitle").text() == "Local document sample"
     assert window.workspace.recent[0] == path
@@ -226,8 +226,23 @@ def test_command_palette_filters_the_real_menu_actions(qtbot, window):
 
 def test_keyboard_actions_have_menu_equivalents_without_fake_future_actions(window):
     assert set(window.actions) >= {"open", "rename", "trash", "reveal", "external", "go", "all_files", "recent", "cycle_theme"}
-    assert not set(window.actions) & {"merge", "split", "compress", "print", "cards", "pages"}
+    assert set(window.actions) >= {"merge", "split", "compress", "print", "images"}
+    assert not set(window.actions) & {"cards", "pages"}
     assert window.actions["open_files"].shortcut().matches(QKeySequence(QKeySequence.StandardKey.Open))
+
+@pytest.mark.parametrize("action", ["merge", "split", "compress", "images", "print"])
+def test_shell_opens_real_operation_with_exact_queue_snapshot(qtbot, window, documents, action):
+    targets = [documents / NAMES[2], documents / NAMES[0]]
+    window.add_to_queue(targets)
+    window.launch_operation(action)
+    dialog = window._operation_dialogs[-1]
+    assert dialog.isVisible()
+    assert list(dialog.targets if action == "print" else dialog.targets()) == targets
+    window.clear_queue()
+    assert list(dialog.targets if action == "print" else dialog.targets()) == targets
+    dialog.shutdown()
+    dialog.close()
+
 
 
 def _sample_scan(path):
