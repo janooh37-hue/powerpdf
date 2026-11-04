@@ -33,6 +33,8 @@ macOS 13+ (Apple Silicon or Intel)
 Choose powerpdf-<version>-macos-arm64.dmg for Apple Silicon or
 powerpdf-<version>-macos-x64.dmg for Intel. Mount it and drag PowerPDF.app to
 Applications. The app is ad-hoc signed, not Developer ID signed or notarized.
+Its internal GUI executable is named powerpdf-gui to avoid case-insensitive
+filesystem collisions with the separate powerpdf console executable.
 For a verified download, try Finder right-click / Open. If quarantine still
 blocks it, remove quarantine from this application ONLY:
   xattr -dr com.apple.quarantine /Applications/PowerPDF.app

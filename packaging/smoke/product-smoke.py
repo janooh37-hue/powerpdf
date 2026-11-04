@@ -161,7 +161,13 @@ def linkage(payload: Path, helpers: list[Path], output: Path, env: dict[str, str
             text = "PE imports: " + ", ".join(pe_imports(binary))
         else:
             command = ["otool", "-L", binary] if sys.platform == "darwin" else ["ldd", binary]
-            text = run(command, output, env)
+            probe_env = env
+            if sys.platform == "linux" and binary not in helpers:
+                # Mirror the frozen bootloader's GUI search paths; helper_env
+                # intentionally excludes them to isolate native helper processes.
+                probe_env = env | {"LD_LIBRARY_PATH": os.pathsep.join(map(str, (
+                    payload, payload / "PySide6/Qt/lib", payload / "vendor/lib")))}
+            text = run(command, output, probe_env)
             if "not found" in text:
                 raise RuntimeError(f"Unresolved installed native linkage: {binary}\n{text}")
         proof.append(str(binary) + "\n" + text)

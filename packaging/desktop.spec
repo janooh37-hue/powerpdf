@@ -27,7 +27,7 @@ for kind in ('application', 'terminal'):
                         binaries=[], datas=datas, hiddenimports=hiddenimports,
                         excludes=CONFIG['excluded_modules'] + (['textual', 'textual_image'] if kind == 'application' else []))
     analyses[kind] = analysis
-    name = 'powerpdf' if kind == 'terminal' else ('powerpdf-gui' if sys.platform == 'win32' else 'PowerPDF')
+    name = 'powerpdf' if kind == 'terminal' else ('PowerPDF' if sys.platform == 'linux' else 'powerpdf-gui')
     executables[kind] = EXE(PYZ(analysis.pure), analysis.scripts, options,
                             exclude_binaries=True, name=name,
                             console=kind == 'terminal' or sys.platform == 'linux',

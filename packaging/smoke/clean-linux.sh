@@ -65,6 +65,7 @@ grep -q 'Orientation in degrees:' "$output/ocr-osd.txt"
 # Record linkage from the extracted artifact, not the build/runner vendor tree.
 {
     for binary in "$gs" "$tess"; do printf '\n%s\n' "$binary"; ldd "$binary"; done
+    export LD_LIBRARY_PATH="$payload:$payload/PySide6/Qt/lib:$LD_LIBRARY_PATH"
     find "$payload" \( -name '*Qt6PrintSupport*.so*' -o -name '*qoffscreen*.so' -o -name '*libpdfium*.so' \) -type f -print -exec ldd '{}' \;
 } > "$output/native-linkage.txt" 2>&1
 cat "$output/native-linkage.txt"

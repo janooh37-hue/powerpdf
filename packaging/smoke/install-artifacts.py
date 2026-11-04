@@ -79,10 +79,10 @@ def macos() -> None:
         try:
             app = mount / "PowerPDF.app"
             info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-            if info["CFBundleExecutable"] != "PowerPDF":
+            if info["CFBundleExecutable"] != "powerpdf-gui":
                 raise RuntimeError(f"DMG is not the windowed PowerPDF application: {info}")
             run("codesign", "--verify", "--deep", "--strict", app)
-            smoke(app / "Contents/MacOS/PowerPDF", app / "Contents/MacOS/powerpdf", f"macos-{arch}-mounted")
+            smoke(app / "Contents/MacOS/powerpdf-gui", app / "Contents/MacOS/powerpdf", f"macos-{arch}-mounted")
         finally:
             run("hdiutil", "detach", mount)
 
