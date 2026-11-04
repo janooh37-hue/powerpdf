@@ -24,15 +24,31 @@ pdfmerge = "pdf_merge:main"
 pdfcompress = "pdf_compress:main"
 pdfimage = "pdf_image:main"
 
+[project.gui-scripts]
+powerpdf-gui = "powerpdf_gui:main"
+
 [build-system]
 requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["powerpdf", "powerpdf_cli", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_compress", "pdf_image"]
-packages = ["powerpdf_core"]
+packages = ["powerpdf_core", "powerpdf_gui"]
+
+[tool.setuptools.data-files]
+"share/powerpdf/assets" = ["assets/powerpdf.png"]
+"share/powerpdf/assets/fonts" = [
+    "assets/fonts/*.ttf",
+    "assets/fonts/NotoSans-OFL.txt",
+    "assets/fonts/NotoSansArabic-OFL.txt",
+    "assets/fonts/SOURCES.json",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-qt>=4.5",
 ]
+
+[tool.pytest.ini_options]
+qt_api = "pyside6"
