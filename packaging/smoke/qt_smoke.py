@@ -20,9 +20,18 @@ def run_helper(tool: str, *arguments: str) -> str:
     executable = pdf_runtime.resolve_tool(tool)
     if not executable or "vendor" not in Path(executable).parts:
         raise RuntimeError(f"Missing bundled {tool}: {executable}")
-    result = subprocess.run([executable, *arguments], env=pdf_runtime.helper_env(executable),
-                            check=True, capture_output=True, text=True, timeout=90)
-    return (result.stdout + result.stderr).strip()
+    with pdf_runtime.helper_launch_scope():
+        process = subprocess.Popen([executable, *arguments], env=pdf_runtime.helper_env(executable),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = process.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
+    return (stdout + stderr).strip()
 
 
 def main() -> int:
@@ -54,7 +63,7 @@ def main() -> int:
         work = Path(directory)
         # A real PDF with a vector rectangle; no external fixture or reportlab.
         document = pdfium.PdfDocument.new()
-        page = document.new_page(0, width=320, height=120)
+        page = document.new_page(width=320, height=120)
         rectangle = pdfium.raw.FPDFPageObj_CreateNewRect(12, 12, 296, 96)
         pdfium.raw.FPDFPageObj_SetFillColor(rectangle, 28, 106, 128, 255)
         pdfium.raw.FPDFPath_SetDrawMode(rectangle, pdfium.raw.FPDF_FILLMODE_WINDING, False)

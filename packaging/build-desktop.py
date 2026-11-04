@@ -98,6 +98,7 @@ def macos_helpers() -> None:
         target = VENDOR / name / "bin" / binary.name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, target)
+        run("codesign", "--force", "-s", "-", target)
     for part in ("lib", "Resource", "iccprofiles"):
         shutil.copytree(gs / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
     for name, src, license_name in (("Ghostscript", gs, "COPYING"), ("Tesseract", tess, "LICENSE"),
