@@ -222,6 +222,7 @@ def test_save_as_native_adapter_and_quick_defaults(qtbot, tmp_path, monkeypatch)
     assert dialog.default_destination("pdf").name == "scan_card_01.pdf"
     dialog.name_card_value(0, "16/16402 Station")
     assert dialog.default_destination("pdf").name == "16-16402 Station.pdf"
+    dialog.save_kind.setCurrentIndex(dialog.save_kind.findData("pdf"))
     chosen = tmp_path / "chosen.pdf"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(chosen), "PDF"))
     monkeypatch.setattr(dialog, "review_export", lambda _plan: True)
@@ -330,4 +331,47 @@ def test_capture_complete_workspace_and_real_save_result(qtbot, tmp_path, monkey
     assert len(PdfReader(result.outputs[0]).pages) == 2 * len(dialog.session.kept())
     qtbot.wait(100)
     assert dialog.grab().save(str(folder / "cards-save-result.png"))
+    teardown(dialog)
+
+
+def test_batch_defaults_enter_and_j_choose_kept_card_folders(qtbot, tmp_path, monkeypatch):
+    dialog = workspace(qtbot, tmp_path, monkeypatch)
+    assert dialog.save_kind.currentData() == "pdf-folder"
+    folders = [tmp_path / "pdf-cards", tmp_path / "jpg-cards"]
+    for folder in folders:
+        folder.mkdir()
+    destinations = iter(folders)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(next(destinations)))
+    monkeypatch.setattr(dialog, "review_export", lambda _plan: True)
+    dialog.editor.front_view.setFocus()
+    with qtbot.waitSignal(dialog.completed, timeout=60000):
+        qtbot.keyClick(dialog.editor.front_view, Qt.Key.Key_Return)
+    assert len(dialog.job_result.outputs) == 8
+    assert all(path.parent == folders[0] and len(PdfReader(path).pages) == 2 for path in dialog.job_result.outputs)
+    with qtbot.waitSignal(dialog.completed, timeout=60000):
+        qtbot.keyClick(dialog.editor.front_view, Qt.Key.Key_J)
+    assert len(dialog.job_result.outputs) == 16
+    assert all(path.parent == folders[1] and path.suffix == ".jpg" for path in dialog.job_result.outputs)
+    teardown(dialog)
+
+
+def test_single_card_retains_single_pdf_and_jpg_defaults(qtbot, tmp_path, monkeypatch):
+    source = multi_card_scan(tmp_path / "batch.pdf")
+    single = tmp_path / "single.pdf"
+    page = PdfReader(source).pages[0]
+    page.cropbox.lower_left = (0, 600)
+    page.cropbox.upper_right = (595, 842)
+    from pypdf import PdfWriter
+    with PdfWriter() as writer:
+        writer.add_page(page)
+        writer.write(single)
+    monkeypatch.setattr(ocr, "resolve_tesseract", lambda: None)
+    dialog = CardsWindow([single], settings_path=tmp_path / "settings.json")
+    qtbot.addWidget(dialog, before_close_func=lambda widget: widget.shutdown())
+    dialog.show()
+    qtbot.waitUntil(lambda: dialog.session is not None, timeout=30000)
+    assert len(dialog.session.cards) == 1
+    assert dialog.save_kind.currentData() == "pdf"
+    assert dialog.default_destination("pdf").name == "single_card.pdf"
+    assert dialog.default_destination("jpg").name == "single_front.jpg"
     teardown(dialog)

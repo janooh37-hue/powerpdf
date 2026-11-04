@@ -305,6 +305,7 @@ class CardsWindow(QDialog):
         self.strip.setWrapping(False)
         self.strip.setMaximumHeight(86)
         self.strip.currentRowChanged.connect(self.select_card)
+        self.strip.installEventFilter(self)
         layout.addWidget(self.strip)
         controls = QHBoxLayout()
         self.front_button = self._button("Focus front", lambda: self.focus_side(0), "Edit the front side")
@@ -331,7 +332,7 @@ class CardsWindow(QDialog):
         for title, kind in KINDS:
             self.save_kind.addItem(title, kind)
         save_row.addWidget(self.save_kind, 1)
-        self.save_button = self._button("Quick save", self.quick_save, "Review the default output then save · Ctrl/Cmd+S")
+        self.save_button = self._button("Quick save", self.quick_save, "Review default outputs · Enter from canvas/strip or Ctrl/Cmd+S")
         self.save_as_button = self._button("Save As…", self.save_as, "Choose a destination, then review exact output names")
         save_row.addWidget(self.save_button)
         save_row.addWidget(self.save_as_button)
@@ -347,7 +348,7 @@ class CardsWindow(QDialog):
         self.results.hide()
         layout.addWidget(self.results)
         bottom = QHBoxLayout()
-        bottom.addWidget(_label("150 dpi · JPEG q80 · boxes burned in · originals preserved\nN name · S swap · X skip · J JPG pair · O combined PDF · Page Up/Down navigate"), 1)
+        bottom.addWidget(_label("150 dpi · JPEG q80 · boxes burned in · originals preserved\nEnter save · N name · S swap · X skip · J JPGs · O combined PDF · Page Up/Down navigate"), 1)
         self.cancel_button = self._button("Cancel work", self.cancel_work, "Cooperative cancellation; completed files are retained")
         self.close_button = self._button("Close", self.reject, "Close workspace; unsaved edits require confirmation")
         bottom.addWidget(self.cancel_button)
@@ -389,6 +390,15 @@ class CardsWindow(QDialog):
         self.activateWindow()
         return self
 
+    def eventFilter(self, watched, event):
+        canvases = () if self.editor is None else (self.editor.source_view, self.editor.front_view, self.editor.back_view)
+        if (watched in (self.strip, *canvases) and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.modifiers()):
+            self.quick_save()
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
+
     def _set_enabled(self, enabled):
         for widget in (self.strip, self.previous_button, self.next_button, self.front_button,
                        self.back_button, self.swap_button, self.skip_button, self.undo_button,
@@ -423,6 +433,9 @@ class CardsWindow(QDialog):
         self.session = session
         self._saved_states = {i: _edit_state(session, i) for i in range(len(session.cards))}
         self.editor = CardEditor(session, self)
+        for view in (self.editor.source_view, self.editor.front_view, self.editor.back_view):
+            view.installEventFilter(self)
+        self.save_kind.setCurrentIndex(self.save_kind.findData("pdf-folder" if len(session.cards) > 1 else "pdf"))
         self.editor.changed.connect(self._changed)
         self.editor_layout.addWidget(self.editor)
         self._set_enabled(True)
@@ -587,10 +600,16 @@ class CardsWindow(QDialog):
         return source.with_name(base + "_front.jpg")
 
     def quick_save(self):
-        self.save(self.save_kind.currentData())
+        kind = self.save_kind.currentData()
+        self.save(kind, choose=kind.endswith("-folder"))
 
     def save_as(self):
         self.save(self.save_kind.currentData(), choose=True)
+
+    def save_jpgs(self):
+        if self.session is not None:
+            multiple = len(self.session.cards) > 1
+            self.save("jpg-folder" if multiple else "jpg", choose=multiple)
 
     def review_export(self, plan):
         dialog = QDialog(self)
@@ -728,7 +747,7 @@ class CardsWindow(QDialog):
                 "n": self.name_card,
                 "s": lambda: self.command("swap"),
                 "x": lambda: self.command("skip"),
-                "j": lambda: self.save("jpg"),
+                "j": self.save_jpgs,
                 "o": lambda: self.save("combined"),
             }
             action = actions.get(event.text().lower())

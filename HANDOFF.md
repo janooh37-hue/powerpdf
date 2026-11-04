@@ -258,6 +258,10 @@ output review and safe overwrite confirmation. Workers export immutable geometry
 snapshots, reserve reviewed destinations, check source/destination revisions and
 report actual partial commits. Closing an unsaved workspace asks before discard;
 declining also aborts closing its main browser window.
+Multiple-card loads default to all-kept PDFs in a selected folder; Enter from a
+canvas/strip or Ctrl/Cmd+S preserves that batch-save workflow. J asks for a kept
+JPG folder for multiple cards, but retains the automatic front/back pair for one
+card. Individual/side exports remain explicit choices in the save selector.
 
 The generated `gui_test_fixtures.multi_card_scan` is a local two-page A4,
 four-row-per-page, left-back/right-front vector scan with eight synthetic vehicle
@@ -312,7 +316,7 @@ shared PDFium lane, not QtPdf or QtWebEngine.
 
 Final Phases 4–5 acceptance on Linux:
 `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
-**351 passed, 4 skipped in 111.08s**. Skips remain the three Windows ACL cases and
+**353 passed, 4 skipped in 111.31s**. Skips remain the three Windows ACL cases and
 legacy `gswin64c` integration case. A 128-page vector fixture exercises lazy
 visible rendering, bounded caches, intrinsic-plus-additional rotation, real
 extract/save outputs, undo/redo and revision/cancellation races. High-DPR tests
