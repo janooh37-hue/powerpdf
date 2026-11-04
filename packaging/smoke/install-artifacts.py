@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import zipfile
 
@@ -50,9 +51,15 @@ def windows() -> None:
     try:
         smoke(target / "bin/powerpdf-gui.exe", target / "bin/powerpdf.exe", "windows-x64-installed")
     finally:
-        run(target / "unins000.exe", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
-    if any(path.is_file() for path in target.rglob("*")):
-        raise RuntimeError("Windows uninstall left installed product files")
+        run(target / "unins000.exe", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+            f"/LOG={EVIDENCE / 'windows-x64-installed/uninstall.log'}")
+    # Inno's uninstaller self-deletes from a temporary child after its launcher
+    # exits. Wait for completion rather than racing that asynchronous cleanup.
+    deadline = time.monotonic() + 30
+    while remaining := [str(path.relative_to(target)) for path in target.rglob("*") if path.is_file()]:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Windows uninstall left installed product files: {remaining}")
+        time.sleep(0.25)
     with tempfile.TemporaryDirectory(prefix="powerpdf-portable-") as temporary:
         portable = Path(temporary)
         with zipfile.ZipFile(DIST / f"{stem}.zip") as archive:

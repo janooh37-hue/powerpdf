@@ -47,6 +47,8 @@ Double-click PowerPDF.app for the GUI. Terminal commands live in
 Add $HOME/.local/bin to your shell PATH, then run powerpdf for the TUI or, for
 example, pdfsplit --help. Keep the app installed at the symlink target. Remove
 the app and these symlinks to uninstall.
+The command aliases are symlinks to the signed console executable, not scripts
+whose extended-attribute signatures could be lost when copying the application.
 
 Linux x64
 The native build baseline is Ubuntu 22.04. For the Debian package:

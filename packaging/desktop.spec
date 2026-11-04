@@ -1,12 +1,14 @@
 # Both executables share one native layout; BUNDLE handles macOS code/data seams.
 import json
 import sys
+import tomllib
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).parent
 CONFIG = json.loads((ROOT / 'packaging/desktop-config.json').read_text())
+VERSION = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['version']
 options = [('X utf8', None, 'OPTION')]
 analyses = {}
 executables = {}
@@ -37,7 +39,9 @@ collection = COLLECT(executables['application'], executables['terminal'],
                      strip=False, upx=True, name='PowerPDF')
 if sys.platform == 'darwin':
     app = BUNDLE(collection, name='PowerPDF.app', icon=str(ROOT / 'assets/powerpdf.png'),
-                 bundle_identifier='org.powerpdf.PowerPDF', info_plist={
+                 bundle_identifier='org.powerpdf.PowerPDF', version=VERSION, info_plist={
+                     'CFBundleVersion': VERSION, 'LSBackgroundOnly': False,
+                     'LSUIElement': False, 'NSHighResolutionCapable': True,
                      'CFBundleDocumentTypes': [{'CFBundleTypeName': 'PDF document',
                                                'CFBundleTypeRole': 'Editor',
                                                'LSHandlerRank': 'Alternate',

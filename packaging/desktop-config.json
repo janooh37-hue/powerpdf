@@ -6,7 +6,7 @@
     "assets": ["assets", "LICENSE", "NOTICE"]
   },
   "terminal": {
-    "entry": "powerpdf_cli.py",
+    "entry": "packaging/terminal-entry.py",
     "hidden_imports": ["powerpdf", "pdf_runtime", "pdf_split", "pdf_merge", "pdf_compress", "pdf_image"],
     "collect_submodules": ["powerpdf_core", "textual"],
     "assets": ["pdf_print.ps1"]

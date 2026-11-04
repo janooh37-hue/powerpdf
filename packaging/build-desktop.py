@@ -222,6 +222,8 @@ def freeze() -> Path:
             (bin_dir / f"pdf{command}.cmd").write_text(f'''@echo off
 "%~dp0powerpdf.exe" --cli {command} %*
 ''')
+        elif sys.platform == "darwin":
+            (bin_dir / f"pdf{command}").symlink_to("powerpdf")
         else:
             path = bin_dir / f"pdf{command}"
             path.write_text(f'''#!/bin/sh
