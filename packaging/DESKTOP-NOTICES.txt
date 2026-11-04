@@ -1,0 +1,65 @@
+PowerPDF cross-platform desktop feasibility bundles
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright PowerPDF contributors
+
+The Qt smoke program is a CI test harness, never the production application.
+The complete checked-in application/build source at the artifact's commit is
+provided as powerpdf-corresponding-source.tar.gz beside every native artifact.
+Repository: https://github.com/janooh37-hue/powerpdf
+License text: licenses/PowerPDF-AGPL-3.0-or-later.txt
+
+Ghostscript: AGPL-3.0-or-later; Windows/macOS 10.08.0.
+Exact source archive ghostscript-10.08.0-source.tar.xz accompanies artifacts.
+https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/tag/gs10080
+Linux uses Ubuntu 22.04 Ghostscript 9.55.0 with Ubuntu security patches instead;
+LINUX-PROVENANCE.json records exact binary versions/SHA256s, package copyright
+files are in licenses/ubuntu, and LINUX-SOURCES.txt points to Ubuntu's matching
+source packages. Those source packages include the corresponding patch/build
+recipes, not only upstream sources. Do not substitute the 10.08 source archive
+for the Ubuntu Ghostscript corresponding source.
+
+Tesseract: Apache-2.0; Windows 5.5.0.20241111 (UB Mannheim/Chocolatey),
+macOS 5.5.0 source build; Linux Ubuntu 4.1.1.
+https://github.com/tesseract-ocr/tesseract/tree/5.5.0
+https://community.chocolatey.org/packages/tesseract/5.5.0.20241111
+Leptonica (BSD-2-Clause): https://github.com/DanBloomberg/leptonica/tree/1.85.0
+macOS image input support is PNG (matching card OCR); libpng 1.6.47 and zlib 1.3.1
+are statically linked. Other Leptonica input codecs are deliberately disabled.
+All macOS source URLs and verified SHA256s are recorded in SOURCE-INPUTS.json.
+
+Tessdata_fast 4.1.0 eng + ara + osd: Apache-2.0.
+https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
+Models use the same checksums on every platform.
+Noto Sans Arabic: SIL Open Font License 1.1, licenses/Noto-OFL.txt.
+https://github.com/notofonts/noto-fonts/tree/v20201206-phase3
+
+PySide6 / Qt 6.8.3: LGPL-3.0 / GPL / commercial, selected Qt Widgets modules.
+https://download.qt.io/archive/qt/6.8/6.8.3/single/
+https://code.qt.io/pyside/pyside-setup.git/?h=v6.8.3
+Shiboken6 uses the same Qt for Python release/source.
+Qt/PySide shared libraries remain separate in the onedir bundle; recipients may
+replace compatible libraries and run their modified copy. No EULA restricts
+modification/reverse engineering for this purpose. Re-sign modified macOS copies
+with codesign --force --deep -s - /path/to/app. Rebuild instructions and scripts
+are included in the application source archive. No unnecessary QtWebEngine,
+Qt3D, QtQuick or multimedia modules are collected.
+
+pypdfium2 / PDFium: Apache-2.0 or BSD-3-Clause binding; PDFium BSD-3-Clause plus
+third-party notices. Bundled wheel license texts are under licenses/python.
+https://github.com/pypdfium2-team/pypdfium2/tree/4.30.0
+https://pdfium.googlesource.com/pdfium/
+Pillow: HPND; https://github.com/python-pillow/Pillow/tree/11.3.0
+CPython: PSF-2.0; https://www.python.org/downloads/source/
+PyInstaller: GPL-2.0-or-later with bootloader exception.
+https://github.com/pyinstaller/pyinstaller/tree/v6.17.0
+The collected wheel distribution license/notice texts are under licenses/python.
+Linux dependency copyright/source information is under licenses/ubuntu.
+The pinned AppImage tooling origin/checksum is in SOURCE-INPUTS.json.
+
+Windows additionally includes fzf 0.74.4 (MIT) from the existing full runtime
+fetcher, with its license, and app-local Microsoft Visual C++ runtime components
+under Microsoft's redistributable terms. Existing runtime notices and bundled
+upstream documentation retain their respective third-party terms.
+
+Unsigned CI builds do not claim notarization, SmartScreen reputation, physical
+printing, native dialog, Wayland or desktop accessibility qualification.

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PowerPDF Packaging Smoke (CI only)
+Comment=CI test harness, not the PowerPDF application
+Exec=powerpdf-packaging-smoke %F
+Icon=powerpdf-packaging-smoke
+Terminal=false
+Categories=Office;Graphics;
+MimeType=application/pdf;

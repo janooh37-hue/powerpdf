@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string] $Version)
+param([string] $Version, [switch] $RuntimeOnly, [string] $RuntimeDestination = 'build/desktop-vendor')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -16,6 +16,8 @@ function Expand-Installer([string] $File, [string] $Destination) {
     if ($LASTEXITCODE) { throw "Dependency extraction failed: $File" }
 }
 
+if (-not $RuntimeOnly) {
+if (-not $Version) { throw 'Version is required for release builds' }
 $printScript = (Resolve-Path 'pdf_print.ps1').Path
 uv run --frozen --with pyinstaller==6.17.0 pyinstaller powerpdf_cli.py --onedir --name powerpdf --console --noconfirm --clean `
     --specpath build --workpath build --distpath dist --collect-submodules textual --collect-data textual `
@@ -23,9 +25,10 @@ uv run --frozen --with pyinstaller==6.17.0 pyinstaller powerpdf_cli.py --onedir 
     --hidden-import pdf_compress --hidden-import pdf_image --hidden-import pdf_runtime --copy-metadata powerpdf `
     --add-data "${printScript};."
 if ($LASTEXITCODE) { throw 'PyInstaller failed' }
+}
 
 $root = (Get-Location).Path
-$bin = Join-Path $root 'dist/powerpdf'
+$bin = if ($RuntimeOnly) { Join-Path $root $RuntimeDestination } else { Join-Path $root 'dist/powerpdf' }
 $vendor = Join-Path $bin 'vendor'
 $licenses = Join-Path $bin 'licenses'
 New-Item -ItemType Directory -Force $vendor, $licenses, 'build/downloads' | Out-Null
@@ -71,6 +74,7 @@ Download 'https://github.com/junegunn/fzf/releases/download/v0.74.4/fzf-0.74.4-w
 Expand-Archive "$downloads/fzf.zip" "$vendor/fzf" -Force
 Download 'https://raw.githubusercontent.com/junegunn/fzf/v0.74.4/LICENSE' "$licenses/fzf-MIT.txt" ''
 Copy-Item 'packaging/THIRD-PARTY-NOTICES.txt' $bin
+if ($RuntimeOnly) { return }
 Copy-Item 'packaging/launch.ps1' $bin
 foreach ($command in @('split', 'merge', 'compress', 'image', 'print')) {
     "@echo off`r`n`"%~dp0powerpdf.exe`" --cli $command %*`r`nexit /b %errorlevel%`r`n" |
