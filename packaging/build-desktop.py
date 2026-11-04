@@ -74,9 +74,19 @@ def macos_helpers() -> None:
     png = source("libpng")
     cmake_build("png", png, prefix, "-DPNG_SHARED=OFF", "-DPNG_FRAMEWORK=OFF", "-DPNG_TESTS=OFF",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
+    # Leptonica's built-in bitmap fonts are TIFF-compressed even when the app
+    # sends PNG images. Include that codec rather than accepting missing-font
+    # diagnostics from an otherwise successful Tesseract process.
+    tiff = source("libtiff")
+    cmake_build("tiff", tiff, prefix, "-Dtiff-tools=OFF", "-Dtiff-tests=OFF",
+                "-Dtiff-contrib=OFF", "-Dtiff-docs=OFF", "-Dtiff-opengl=OFF", "-Dcxx=OFF",
+                "-Djpeg=OFF", "-Dold-jpeg=OFF", "-Djpeg12=OFF", "-Djbig=OFF", "-Dlerc=OFF",
+                "-Dlzma=OFF", "-Dzstd=OFF", "-Dwebp=OFF", "-Dlibdeflate=OFF",
+                f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
     lept = source("leptonica")
     cmake_build("leptonica", lept, prefix, "-DBUILD_PROG=OFF", "-DENABLE_GIF=OFF", "-DENABLE_JPEG=OFF",
-                "-DENABLE_TIFF=OFF", "-DENABLE_WEBP=OFF", "-DENABLE_OPENJPEG=OFF",
+                "-DENABLE_TIFF=ON", "-DENABLE_WEBP=OFF", "-DENABLE_OPENJPEG=OFF",
+                f"-DTIFF_LIBRARY={prefix}/lib/libtiff.a", f"-DTIFF_INCLUDE_DIR={prefix}/include",
                 f"-DPNG_LIBRARY={prefix}/lib/libpng.a", f"-DPNG_PNG_INCLUDE_DIR={prefix}/include",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
     tess = source("tesseract")
@@ -100,7 +110,7 @@ def macos_helpers() -> None:
         run("codesign", "--force", "-s", "-", target)
     for part in ("lib", "Resource", "iccprofiles"):
         shutil.copytree(gs / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
-    for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("zlib", zlib)):
+    for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("libtiff", tiff), ("zlib", zlib)):
         # Static codec libraries retain their own notices, not only GS's AGPL.
         for license_file in src.rglob("*"):
             if license_file.is_file() and license_file.name.lower().startswith(("license", "copying", "copyright", "notice")):
