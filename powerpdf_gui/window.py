@@ -18,7 +18,7 @@ from send2trash import send2trash
 from powerpdf_core import files
 from powerpdf_core.settings import SettingsStore
 from powerpdf_core.workspace import Workspace
-from . import desktop, resources, themes
+from . import VERSION, desktop, resources, themes
 from .navigation import FileBrowser, QueueList, RecentList
 from .text import FilenameEdit, filename_text
 from .preview import PreviewPane
@@ -845,7 +845,7 @@ class MainWindow(QMainWindow):
             "Tab moves focus. Escape cancels a dialog.")
 
     def show_about(self):
-        QMessageBox.about(self, "About PowerPDF", "PowerPDF 0.7.0\nLocal PDF workspace\n\n"
+        QMessageBox.about(self, "About PowerPDF", f"PowerPDF {VERSION}\nLocal PDF workspace\n\n"
             "Copyright © 2026 PowerPDF contributors\nAGPL-3.0-or-later — you may share and modify this application.\n"
             "No warranty. See Help → License and notices for the full license.\n\n"
             "PDFium rendering, PySide6 / Qt, and bundled Noto fonts. Your documents stay local.")

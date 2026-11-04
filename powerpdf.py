@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 from powerpdf_core.files import compare_pair, is_pdf
 from powerpdf_core.jobs import CancelToken, JobCancelled, JobSpec, run_job
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 SETTINGS = core_settings.settings_path()
 CELL_W, CELL_H = 24, 14  # one page cell of the Pages grid, in terminal cells
 

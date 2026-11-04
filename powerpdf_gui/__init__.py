@@ -1,6 +1,7 @@
 """PowerPDF's native desktop entry point (no TUI imports)."""
 from __future__ import annotations
 
+VERSION = "0.8.0"
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
@@ -17,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication.instance() or PowerPDFApplication([sys.argv[0]])
     app.setApplicationName("PowerPDF")
     app.setOrganizationName("PowerPDF")
-    app.setApplicationVersion("0.7.0")
+    app.setApplicationVersion(VERSION)
     paths = [Path(value).expanduser().resolve() for value in args.paths]
     folders = [path for path in paths if path.is_dir()]
     try:
