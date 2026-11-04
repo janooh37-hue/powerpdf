@@ -101,7 +101,10 @@ def unix_helpers() -> None:
     cmake_build("tesseract", tess, prefix, "-DBUILD_TRAINING_TOOLS=OFF", "-DBUILD_TESTS=OFF",
                 "-DDISABLE_ARCHIVE=ON", "-DDISABLE_CURL=ON", "-DOPENMP_BUILD=OFF",
                 "-DDISABLE_TIFF=ON", "-DGRAPHICS_DISABLED=ON", "-DENABLE_NATIVE=OFF",
-                f"-DLeptonica_DIR={prefix}/lib/cmake/leptonica")
+                f"-DLeptonica_DIR={prefix}/lib/cmake/leptonica",
+                # Leptonica exports JPEG before TIFF. ELF static archives are
+                # scanned left-to-right, so TIFF's JPEG12 symbols need JPEG last.
+                *([f"-DCMAKE_CXX_STANDARD_LIBRARIES={prefix}/lib/libjpeg.a"] if sys.platform == "linux" else []))
     gs = source("ghostscript")
     gs_prefix = BUILD / "gs-prefix"
     env = os.environ.copy()
@@ -205,43 +208,15 @@ def common_data() -> None:
 
 
 def freeze() -> Path:
-    for kind, name in (("terminal", "powerpdf"), ("application", NAME)):
-        config = CONFIG[kind]
-        if sys.platform == "win32" and kind == "application":
-            name = "powerpdf-gui"
-        destination = BUILD / "terminal-dist" if kind == "terminal" else DIST
-        args = [sys.executable, "-m", "PyInstaller", config["entry"], "--onedir", "--name", name,
-                "--noconfirm", "--clean", "--paths", str(ROOT), "--distpath", str(destination),
-                "--workpath", str(BUILD / kind), "--specpath", str(BUILD),
-                "--collect-data", "pypdfium2", "--collect-data", "pypdfium2_raw", "--copy-metadata", "powerpdf"]
-        for module in config["hidden_imports"]:
-            args.extend(["--hidden-import", module])
-        for module in config["collect_submodules"]:
-            args.extend(["--collect-submodules", module])
-        for asset in config["assets"]:
-            target = asset if (ROOT / asset).is_dir() else "."
-            args.extend(["--add-data", f"{ROOT / asset}{os.pathsep}{target}"])
-        for module in CONFIG["excluded_modules"] + (["textual", "textual_image"] if kind == "application" else []):
-            args.extend(["--exclude-module", module])
-        if kind == "terminal":
-            args.extend(["--collect-data", "textual", "--console"])
-        else:
-            args.append("--windowed" if sys.platform != "linux" else "--console")
-            if sys.platform in ("win32", "darwin"):
-                args.extend(["--icon", str(ROOT / "assets/powerpdf.png")])
-        run(*args)
-        internal = destination / name / "_internal"
-        if kind == "application" and sys.platform == "darwin":
-            internal = DIST / (NAME + ".app") / "Contents/Resources"
-        shutil.copytree(STAGE, internal, dirs_exist_ok=True)
-    if sys.platform == "win32":
-        (DIST / "powerpdf-gui").rename(DIST / NAME)
+    run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+        "--distpath", DIST, "--workpath", BUILD / "freeze", ROOT / "packaging/desktop.spec")
     if sys.platform == "darwin":
         bin_dir = DIST / (NAME + ".app") / "Contents/MacOS"
-        shutil.copytree(BUILD / "terminal-dist/powerpdf", bin_dir, dirs_exist_ok=True)
+        payload = DIST / (NAME + ".app") / "Contents/Resources"
     else:
         bin_dir = DIST / NAME
-        shutil.copytree(BUILD / "terminal-dist/powerpdf", bin_dir, dirs_exist_ok=True)
+        payload = bin_dir / "_internal"
+    shutil.copytree(STAGE, payload, dirs_exist_ok=True)
     for command in ("split", "merge", "compress", "image") + (("print",) if sys.platform == "win32" else ()):
         if sys.platform == "win32":
             (bin_dir / f"pdf{command}.cmd").write_text(f'''@echo off
@@ -254,16 +229,9 @@ exec "$(dirname "$0")/powerpdf" --cli {command} "$@"
 ''')
             path.chmod(0o755)
     if sys.platform == "darwin":
-        import plistlib
-        plist_path = DIST / (NAME + ".app") / "Contents/Info.plist"
-        info = plistlib.loads(plist_path.read_bytes())
-        info["CFBundleIdentifier"] = "org.powerpdf.PowerPDF"
-        info["CFBundleDocumentTypes"] = [{"CFBundleTypeName": "PDF document", "CFBundleTypeRole": "Editor",
-                                        "LSHandlerRank": "Alternate", "LSItemContentTypes": ["com.adobe.pdf"]}]
-        plist_path.write_bytes(plistlib.dumps(info))
         run("codesign", "--force", "--deep", "-s", "-", DIST / (NAME + ".app"))
         run("codesign", "--verify", "--deep", "--strict", DIST / (NAME + ".app"))
-    payload = DIST / (NAME + ".app") / "Contents/Resources" if sys.platform == "darwin" else DIST / NAME / "_internal"
+    # Runtime resolution also considers Contents/Resources for macOS helpers.
     return payload
 
 

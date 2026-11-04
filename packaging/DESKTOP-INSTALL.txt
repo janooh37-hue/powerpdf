@@ -83,6 +83,11 @@ OS facilities. CI artifact smoke tests use an offscreen display and do not
 qualify physical printer output or every desktop environment.
 
 Native CI diagnostics
+The two executable profiles are declared in desktop-config.json and frozen by
+desktop.spec into one shared native layout. macOS uses PyInstaller's standard
+Frameworks/Resources separation for both executables before ad-hoc signing.
+The frozen interpreter enables UTF-8 so Arabic paths and redirected CLI output
+do not depend on the Windows console code page.
 After packaging, CI runs:
   uv run --frozen python packaging/smoke/install-artifacts.py
 The installed real MainWindow is captured in
