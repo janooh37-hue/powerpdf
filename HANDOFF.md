@@ -26,8 +26,8 @@ Phase 1 extracts `powerpdf_core`: `files`/`outputs`, `merge`, `split`, `compress
 Core has no Qt, Textual or Rich dependencies. `pdf_split`, `pdf_merge`,
 `pdf_compress`, and `pdf_image` are argparse adapters, not importable algorithm
 homes; the obsolete `pdf_card` module is removed. `powerpdf_cli` remains the
-frozen CLI/TUI dispatcher. The GUI entry point and assets are delivered with the
-GUI shell phase, not as Phase 1 placeholders.
+frozen CLI/TUI dispatcher. The native shell is now `powerpdf_gui:main`;
+`powerpdf-gui` is a windowed GUI script, also available as `python -m powerpdf_gui`.
 
 `RenderSession` alone owns all PDFium resources/calls under one process-wide
 mutex, opens byte snapshots, and returns owned RGB images. Preview and thumbnail
@@ -60,11 +60,92 @@ Ghostscript integration case requiring `gswin64c`).
 No print job was submitted. Native desktop/bundle and Windows ACL qualification
 remain platform acceptance work; headless tests do not establish those results.
 
-Phase 2 (GUI shell), Phase 3 (bulk operations/Qt printing), Phase 4 (cards) and
-Phase 5 (pages/compare) require separate owner approval in that order. Phase 1
-retains the existing TUI/CLI Windows print path; never send jobs to the SHARP.
+Phase 2 was approved and delivered as the native shell below. Phase 3 (bulk
+operations/Qt printing), Phase 4 (cards) and Phase 5 (pages/compare) still require
+separate owner approval in that order. The TUI/CLI Windows print path is retained
+until the printing cutover; never send jobs to the SHARP.
 The parallel `gui-packaging` engineer owns runtime discovery, `packaging/` and
 `.github/workflows/`; new assets belong under `assets/` when introduced.
+
+## Native desktop shell — Phase 2
+
+Launch from source with `uv run --frozen powerpdf-gui [files-or-folders]`.
+The window has a native Unicode file/folder browser, ordered drag/keyboard queue
+dock, recent documents, document metadata, activity, and a real page-image preview.
+Open Files/Open Folder use native dialogs. Files dropped from outside are only
+queued; folders navigate; a mixed drop queues PDFs in order then opens the last
+folder. No source file is moved by a drop.
+
+Preview has page flip, zoom, fit-page/width and drag-to-pan. One coalescing worker
+owns its core `RenderSession`; generation IDs reject stale completions, image
+transfers own their pixels, and the physical resolution follows zoom/viewport/DPR.
+Screen rasters have a 12-million-pixel budget with an explicit resolution-limit
+message. Card/image/print physical-size policies are not changed.
+
+Rename uses native `QLineEdit` with normal Qt Arabic shaping, including IME input.
+Rename/Trash remap queued/recent descendants. Trash failures never become permanent
+deletion. Reveal uses Explorer shell selection, Finder `open -R`, or Linux
+FileManager1; unsupported Linux selection reports that only the parent opened.
+External open checks for PowerPDF self-association loops where the OS exposes the
+handler. OS dialog/association/reveal qualification remains platform-specific.
+
+Menus and the command palette expose the working shell actions; single-letter
+TUI browser keys apply only outside text entry. Queue Shift+Up/Down and Delete
+reorder/remove without touching files. PowerPDF dark is default; Light, System,
+Game Boy and High contrast are available. Window geometry/docks/folder/theme are
+stored under the shared settings `gui` object, separately from TUI presentation.
+Later-phase operation buttons are not represented by disabled or fake controls.
+
+Noto Sans and Noto Sans Arabic are bundled under `assets/fonts/`, unmodified,
+with both full OFL licenses and pinned URL/hash provenance in `SOURCES.json`.
+Qt shapes logical text itself; no terminal bidi workaround is used.
+`resources.asset_path` resolves source `assets/`, frozen `_MEIPASS/assets/`, or
+wheel data at `sys.prefix/share/powerpdf/assets/`. The app icon is a local PNG.
+
+Runtime commits `3b2f5b6` and `1eaaa9f` are cherry-picked. Every GS/Tesseract
+process creation uses `helper_launch_scope` plus `helper_env`. Host launches use
+`host_launch_scope` plus sanitized environments where the API supports them.
+The shared launch lock prevents frozen Windows DLL-directory resets racing a
+helper launch. The DLL-directory setting is restored immediately after creation,
+not held for the lifetime of an OCR/compression/print child.
+
+Acceptance: `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**224 passed, 4 skipped in 40.55s**. Skips remain three Windows ACL cases and the
+existing `gswin64c` integration case. Qt tests exercise real PDFs, source changes,
+HiDPI/zoom/page navigation, queue interactions, Arabic IME rename, descendant
+remapping, native-dialog adapters, desktop dispatch and worker shutdown.
+Native dialogs/desktop dispatch are mocked only for adapter tests, not claimed
+as installed-platform integration evidence.
+
+Inspected actual Qt offscreen captures:
+- `/tmp/gui/main-window-arabic.png`: browser with all four specified Arabic/mixed
+  filenames and `مستندات السيارات`, queue, real PDFium image and metadata.
+- `/tmp/gui/rename-dialog-arabic.png`: Arabic committed through `QInputMethodEvent`
+  into the native editor.
+The PDF shown is an explicitly labelled synthetic local document, not owner data.
+Regenerate with `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q
+test_gui.py::test_capture_arabic_main_and_rename_dialog`.
+
+### Packaging collection contract
+
+- Entry: `powerpdf_gui:main` (windowed). Include `powerpdf_gui` and modules
+  `__main__`, `application`, `window`, `navigation`, `preview`, `resources`,
+  `desktop`, `themes`; include the existing `powerpdf_core` package and runtime.
+- Qt Python imports: `PySide6.QtCore`, `PySide6.QtGui`, `PySide6.QtWidgets`.
+  No QtPdf, QtWebEngine, QtSvg, QtTest or QtPrintSupport dependency in this phase.
+  Keep native platform plugins/dependencies for each supported OS; offscreen is
+  an automated-test plugin, not the user's desktop platform.
+- Collect `assets/powerpdf.png`, `assets/fonts/NotoSans[wdth,wght].ttf`,
+  `assets/fonts/NotoSansArabic[wdth,wght].ttf`, `NotoSans-OFL.txt`,
+  `NotoSansArabic-OFL.txt`, `SOURCES.json` preserving the `assets/fonts/` layout.
+  Collect root `LICENSE` and `NOTICE` plus the exact helper/dependency notices.
+- Deferred core hidden imports if the freezer does not traverse them:
+  `powerpdf_core.cards`, `.ocr`, `.pages`, `.merge`, `.split`, `.compress`,
+  `.images`, `.render`, `.jobs`, `.workspace`, `.settings`, `.files`, `.outputs`.
+  Do not collect obsolete `pdf_card`. GUI-only builds need not pull in the TUI's
+  Textual/Rich/textual-image payload; retained TUI/CLI builds still need theirs.
+- Linux reveal can use host `dbus-send`; absence/unsupported FileManager1 uses the
+  honest parent-folder-open path. No new Python DBus or QtDBus module is imported.
 
 ## Where the code lives (one copy)
 
