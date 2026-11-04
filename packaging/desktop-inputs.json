@@ -1,4 +1,8 @@
 {
+  "libjpeg": {
+    "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.4/libjpeg-turbo-3.0.4.tar.gz",
+    "sha256": "99130559e7d62e8d695f2c0eaeef912c5828d5b84a0537dcb24c9678c9d5b76b"
+  },
   "libtiff": {
     "url": "https://download.osgeo.org/libtiff/tiff-4.7.0.tar.xz",
     "sha256": "273a0a73b1f0bed640afee4a5df0337357ced5b53d3d5d1c405b936501f71017"

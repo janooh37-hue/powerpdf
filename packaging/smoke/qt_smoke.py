@@ -96,6 +96,8 @@ def main() -> int:
         image.save(work / "ocr.png")
         run_helper("tesseract", str(work / "ocr.png"), "stdout", "-l", "eng", "--psm", "6")
         languages = run_helper("tesseract", "--list-langs")
+        if "function not present" in languages:
+            raise RuntimeError(f"Incomplete bundled Leptonica codec closure: {languages}")
         if not all(language in languages.splitlines() for language in ("eng", "ara", "osd")):
             raise RuntimeError(f"Missing OCR models: {languages}")
         evidence = {tool: {"path": pdf_runtime.resolve_tool(tool), "version": run_helper(tool, "--version")}

@@ -74,21 +74,25 @@ def macos_helpers() -> None:
     png = source("libpng")
     cmake_build("png", png, prefix, "-DPNG_SHARED=OFF", "-DPNG_FRAMEWORK=OFF", "-DPNG_TESTS=OFF",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
+    jpeg = source("libjpeg")
+    cmake_build("jpeg", jpeg, prefix, "-DENABLE_SHARED=OFF", "-DENABLE_STATIC=ON",
+                "-DWITH_TURBOJPEG=OFF", "-DCMAKE_INSTALL_LIBDIR=lib")
     # Leptonica's built-in bitmap fonts are TIFF-compressed even when the app
-    # sends PNG images. Include that codec rather than accepting missing-font
-    # diagnostics from an otherwise successful Tesseract process.
+    # sends PNG images. Leptonica compiles TIFF I/O only with JPEG support too.
     tiff = source("libtiff")
     cmake_build("tiff", tiff, prefix, "-Dtiff-tools=OFF", "-Dtiff-tests=OFF",
                 "-Dtiff-contrib=OFF", "-Dtiff-docs=OFF", "-Dtiff-opengl=OFF", "-Dcxx=OFF",
-                "-Djpeg=OFF", "-Dold-jpeg=OFF", "-Djpeg12=OFF", "-Djbig=OFF", "-Dlerc=OFF",
+                "-Djpeg=ON", "-Dold-jpeg=OFF", "-Djpeg12=OFF", "-Djbig=OFF", "-Dlerc=OFF",
                 "-Dlzma=OFF", "-Dzstd=OFF", "-Dwebp=OFF", "-Dlibdeflate=OFF",
+                f"-DJPEG_LIBRARY={prefix}/lib/libjpeg.a", f"-DJPEG_INCLUDE_DIR={prefix}/include",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
     lept = source("leptonica")
     # libtiff 4.7's static config omits its CMath imported target. Use CMake's
     # stock FindTIFF module and the explicit static library instead.
-    cmake_build("leptonica", lept, prefix, "-DBUILD_PROG=OFF", "-DENABLE_GIF=OFF", "-DENABLE_JPEG=OFF",
+    cmake_build("leptonica", lept, prefix, "-DBUILD_PROG=OFF", "-DENABLE_GIF=OFF", "-DENABLE_JPEG=ON",
                 "-DENABLE_TIFF=ON", "-DENABLE_WEBP=OFF", "-DENABLE_OPENJPEG=OFF",
                 f"-DCMAKE_IGNORE_PATH={prefix}/lib/cmake/tiff",
+                f"-DJPEG_LIBRARY={prefix}/lib/libjpeg.a", f"-DJPEG_INCLUDE_DIR={prefix}/include",
                 f"-DTIFF_LIBRARY={prefix}/lib/libtiff.a", f"-DTIFF_INCLUDE_DIR={prefix}/include",
                 f"-DPNG_LIBRARY={prefix}/lib/libpng.a", f"-DPNG_PNG_INCLUDE_DIR={prefix}/include",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
@@ -113,10 +117,14 @@ def macos_helpers() -> None:
         run("codesign", "--force", "-s", "-", target)
     for part in ("lib", "Resource", "iccprofiles"):
         shutil.copytree(gs / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
-    for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("libtiff", tiff), ("zlib", zlib)):
+    for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("libjpeg-turbo", jpeg), ("libtiff", tiff), ("zlib", zlib)):
         # Static codec libraries retain their own notices, not only GS's AGPL.
         for license_file in src.rglob("*"):
-            if license_file.is_file() and license_file.name.lower().startswith(("license", "copying", "copyright", "notice")):
+            relative = license_file.relative_to(src)
+            is_license = license_file.name.lower().startswith(("license", "copying", "copyright", "notice"))
+            is_license |= license_file.name.lower() in ("readme.ijg", "ftl.txt", "gplv2.txt")
+            is_license |= relative.as_posix() == "jpeg/README"
+            if license_file.is_file() and is_license:
                 destination = LICENSES / name / license_file.relative_to(src)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(license_file, destination)
