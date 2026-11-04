@@ -82,6 +82,12 @@ class SourceChangedError(RuntimeError):
 
 
 class PageEditSession:
+    """Stable source IDs with immutable native rotations in clockwise degrees.
+
+    source_rotations is read once from the same source snapshot as the pages;
+    turns records only additional edits, never the source PDF's /Rotate.
+    """
+
     def __init__(self, path_or_bytes: Path | str | bytes):
         from pypdf import PdfReader
         self.path = None if isinstance(path_or_bytes, bytes) else Path(path_or_bytes)
@@ -92,6 +98,7 @@ class PageEditSession:
         if reader.is_encrypted and not reader.decrypt(""):
             raise ValueError("Password-protected PDFs are not supported")
         self.page_count = len(reader.pages)
+        self.source_rotations = tuple(page.rotation % 360 for page in reader.pages)
         self.order = list(range(self.page_count))
         self.turns: dict[int, int] = {}
         self.picked: set[int] = set()

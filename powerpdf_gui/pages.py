@@ -2,6 +2,8 @@
 
 The grid owns a 32 MiB QImage LRU. Its worker renders uncached through the shared
 RenderSession so a second full thumbnail cache does not double that budget.
+Labels distinguish added clockwise rotation from total source-plus-edit rotation.
+Native rotations are cached by the core source model, never read during painting.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ from powerpdf_core.render import RenderSession, THUMBNAIL_CACHE_BYTES
 from .operations import _signature
 from .text import filename_text
 
-CELL = QSize(188, 234)
+CELL = QSize(188, 256)
 THUMB = QSize(160, 190)
 MIME = "application/x-powerpdf-page-ids"
 
@@ -144,11 +146,16 @@ class PageGridModel(QAbstractListModel):
         if not index.isValid() or not 0 <= index.row() < self.rowCount():
             return None
         page = self.session.order[index.row()]
-        turns = self.session.turns.get(page, 0)
+        added = self.session.turns.get(page, 0) * 90
+        native = self.session.source_rotations[page]
+        total = (native + added) % 360
         if role == Qt.ItemDataRole.DisplayRole:
-            return f"{index.row() + 1} · source {page + 1}" + (f" · +{turns * 90}°" if turns else "")
-        if role == Qt.ItemDataRole.ToolTipRole:
-            return f"Working page {index.row() + 1}; original page {page + 1}; additional rotation {turns * 90}°"
+            return f"{index.row() + 1} · source {page + 1}\n+{added}° ({total}° total)"
+        if role in (Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.AccessibleTextRole,
+                    Qt.ItemDataRole.AccessibleDescriptionRole):
+            return (f"Working page {index.row() + 1}; original page {page + 1}; "
+                    f"source rotation {native}°; additional rotation {added}°; "
+                    f"total rotation {total}° clockwise")
         if role == Qt.ItemDataRole.UserRole:
             return page
         if role == Qt.ItemDataRole.SizeHintRole:
@@ -256,7 +263,7 @@ class _PageDelegate(QStyledItemDelegate):
             painter.setPen(option.palette.highlightedText().color() if selected else option.palette.text().color())
             painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "Loading page…")
         painter.setPen(option.palette.highlightedText().color() if selected else option.palette.text().color())
-        label = QRect(rect.left() + 4, rect.bottom() - 26, rect.width() - 8, 24)
+        label = QRect(rect.left() + 4, rect.bottom() - 48, rect.width() - 8, 46)
         painter.drawText(label, Qt.AlignmentFlag.AlignCenter, index.data())
         if option.state & QStyle.StateFlag.State_HasFocus:
             painter.setPen(QPen(option.palette.highlightedText().color() if selected else option.palette.highlight().color(), 2))

@@ -114,17 +114,63 @@ def test_linked_navigation_uses_shorter_count_and_rotated_dimensions(qtbot, pair
         window.close()
 
 
+def assert_zoom_display(window, mode):
+    prefix = {"page": "Fit page ", "width": "Fit width ", None: "Custom "}[mode]
+    assert window.zoom_spin.prefix() == prefix
+    assert window.zoom_spin.value() == pytest.approx(window.original_pane.zoom * 100, abs=.05)
+    assert f"Original {window.zoom_spin.value():.1f}%" in window.zoom_label.text()
+    assert f"Compressed {window.compressed_pane.zoom * 100:.1f}%" in window.zoom_label.text()
+    assert prefix.strip() in window.zoom_spin.accessibleName()
+    assert "original" in window.zoom_spin.accessibleName().lower()
+    assert "custom" in window.zoom_spin.toolTip().lower()
+
+
+def test_fit_percentage_control_matches_active_original_scale_and_edit_commits_custom(qtbot, pair):
+    window = show_compare(qtbot, pair[0])
+    try:
+        assert_zoom_display(window, "page")
+        # A fit may differ per document; the editable control names its baseline.
+        render_both(qtbot, window, lambda: window.resize(1000, 700))
+        assert_zoom_display(window, "page")
+        assert window.original_pane.zoom != window.compressed_pane.zoom
+        # Repaint/fit notifications must never feed the percentage back as custom.
+        changes = []
+        for pane in window.panes:
+            pane.zoom_mode_changed.connect(changes.append)
+        window.zoom_spin.setFocus()
+        window.original_pane.view.setFocus()
+        assert all(pane.zoom_mode == "page" for pane in window.panes)
+        render_both(qtbot, window, lambda: window.resize(1100, 750))
+        assert_zoom_display(window, "page")
+        assert changes == []
+        # Committing even the currently displayed percentage explicitly leaves fit.
+        field = window.zoom_spin.lineEdit()
+        field.setFocus()
+        field.selectAll()
+        QTest.keyClicks(field, f"{window.zoom_spin.value():.1f}")
+        render_both(qtbot, window, lambda: qtbot.keyClick(field, Qt.Key.Key_Return))
+        assert all(pane.zoom_mode is None for pane in window.panes)
+        assert window.original_pane.zoom == window.compressed_pane.zoom
+        assert_zoom_display(window, None)
+        render_both(qtbot, window, window.compressed_pane.fit_width)
+        assert_zoom_display(window, "width")
+    finally:
+        window.close()
+
+
 def test_fit_custom_zoom_bidirectional_hooks_and_resize(qtbot, pair):
     window = show_compare(qtbot, pair[0])
     try:
         render_both(qtbot, window, lambda: qtbot.mouseClick(window.fit_width_button, Qt.MouseButton.LeftButton))
         assert all(pane.zoom_mode == "width" for pane in window.panes)
+        assert_zoom_display(window, "width")
         for pane in window.panes:
             expected = (pane.view.viewport().width() - 32) / pane.document_info.page_sizes[0][0]
             assert pane.zoom * preview.POINTS_TO_DIP == pytest.approx(expected, abs=.01)
         assert window.original_pane.zoom != window.compressed_pane.zoom
         render_both(qtbot, window, lambda: window.zoom_spin.setValue(225))
         assert all(pane.zoom_mode is None and pane.zoom == pytest.approx(2.25) for pane in window.panes)
+        assert_zoom_display(window, None)
         for pane in window.panes:
             assert pane.view.transform().m11() == pytest.approx(2.25 * preview.POINTS_TO_DIP)
         render_both(qtbot, window, lambda: window.compressed_pane.set_zoom(3))
@@ -132,10 +178,12 @@ def test_fit_custom_zoom_bidirectional_hooks_and_resize(qtbot, pair):
         assert window.zoom_spin.value() == 300
         render_both(qtbot, window, window.compressed_pane.fit_page)
         assert all(pane.zoom_mode == "page" for pane in window.panes)
+        assert_zoom_display(window, "page")
         old = tuple(pane.zoom for pane in window.panes)
         render_both(qtbot, window, lambda: window.resize(1200, 800))
         assert all(pane.zoom_mode == "page" for pane in window.panes)
         assert tuple(pane.zoom for pane in window.panes) != old
+        assert_zoom_display(window, "page")
         render_both(qtbot, window, lambda: qtbot.mouseClick(window.zoom_in_button, Qt.MouseButton.LeftButton))
         assert window.original_pane.zoom_mode is None
         assert window.compressed_pane.zoom == window.original_pane.zoom
@@ -358,6 +406,7 @@ def test_real_vector_original_and_ghostscript_output_capture(qtbot, tmp_path):
     window = show_compare(qtbot, small)
     try:
         assert all(not image(pane).isNull() for pane in window.panes)
+        assert_zoom_display(window, "page")
         folder = Path("/tmp/gui")
         folder.mkdir(parents=True, exist_ok=True)
         assert window.grab().save(str(folder / "compare-view.png"))

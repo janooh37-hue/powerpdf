@@ -176,6 +176,55 @@ def test_internal_drag_ids_duplicate_external_rejection_and_single_undo(qtbot, t
     teardown(dialog)
 
 
+def test_grid_displays_native_added_and_total_rotation_without_reloading(qtbot, tmp_path, monkeypatch):
+    import pypdf
+
+    reads = []
+    reader = pypdf.PdfReader
+
+    def record(*args, **kwargs):
+        reads.append(threading.current_thread())
+        return reader(*args, **kwargs)
+
+    monkeypatch.setattr(pypdf, "PdfReader", record)
+    dialog = workspace(qtbot, tmp_path)
+    try:
+        index = dialog.model.index(0)
+        assert "+0° (90° total)" in index.data()
+        for role in (Qt.ItemDataRole.ToolTipRole, Qt.ItemDataRole.AccessibleTextRole,
+                     Qt.ItemDataRole.AccessibleDescriptionRole):
+            description = index.data(role)
+            assert "source rotation 90°" in description
+            assert "additional rotation 0°" in description
+            assert "total rotation 90°" in description
+        select(dialog, [0], cursor=0)
+        dialog.command("rotate")
+        assert "+90° (180° total)" in dialog.model.index(0).data()
+        description = dialog.model.index(0).data(Qt.ItemDataRole.ToolTipRole)
+        assert "source rotation 90°" in description
+        assert "additional rotation 90°" in description
+        assert "total rotation 180°" in description
+        dialog.request_thumbnails()
+        key = dialog.model.key(0)
+        qtbot.waitUntil(lambda: key in dialog.model.images, timeout=30000)
+        image = dialog.model.images[key]
+        assert image.width() / image.height() == pytest.approx(300 / 420, abs=.01)
+        # Metadata is immutable and keyed by original ID, not by working order.
+        dialog.command("move_before", 3, [0])
+        row = dialog.session.order.index(0)
+        for _ in range(3):
+            dialog.refresh()
+            assert "+90° (180° total)" in dialog.model.index(row).data()
+            assert "original page 1" in dialog.model.index(row).data(Qt.ItemDataRole.AccessibleTextRole)
+        dialog.command("undo")
+        dialog.command("undo")
+        assert "+0° (90° total)" in dialog.model.index(0).data()
+        assert len(reads) == 1
+        assert reads[0] is not threading.main_thread()
+    finally:
+        teardown(dialog)
+
+
 def test_real_exports_intrinsic_additional_rotation_order_extract_and_dirty(qtbot, tmp_path, monkeypatch):
     dialog = workspace(qtbot, tmp_path)
     original = dialog.path.read_bytes()

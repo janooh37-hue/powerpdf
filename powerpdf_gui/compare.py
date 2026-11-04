@@ -1,14 +1,16 @@
 """Read-only original/compressed comparison using the shared screen renderer.
 
-The panes fit their own page dimensions in linked fit modes. Custom zoom uses
-one physical scale; pan links each axis's normalized available scroll travel.
-This is a visual review workspace, not a document-content comparison algorithm.
+The panes fit their own page dimensions in linked fit modes; the editable
+percentage shows the original pane's active scale and names its mode. Editing
+it switches both panes to one custom physical scale. Pan links each axis's
+normalized available scroll travel. This is a visual review workspace,
+not a document-content comparison algorithm.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -58,6 +60,7 @@ class CompareWindow(QDialog):
         self.compressed_path: Path | None = None
         self._closed = False
         self._linking = False
+        self._zoom_edit_pending = False
         self._page_count = 0
         self._page = 0
         self._displayed: dict[PreviewPane, int] = {}
@@ -92,14 +95,16 @@ class CompareWindow(QDialog):
         self.zoom_out_button = self._button("−", "Zoom out both pages · −", self.zoom_out)
         self.zoom_in_button = self._button("+", "Zoom in both pages · +", self.zoom_in)
         self.zoom_spin = QDoubleSpinBox(self)
-        self.zoom_spin.setAccessibleName("Custom linked zoom percentage")
-        self.zoom_spin.setPrefix("Custom ")
+        self.zoom_spin.setAccessibleName("Fit page: original zoom percentage; edit for custom linked zoom")
+        self.zoom_spin.setPrefix("Fit page ")
         self.zoom_spin.setSuffix("%")
         self.zoom_spin.setRange(5, 1600)
         self.zoom_spin.setDecimals(1)
         self.zoom_spin.setValue(100)
         self.zoom_spin.setKeyboardTracking(False)
         self.zoom_spin.valueChanged.connect(lambda value: self.set_zoom(value / 100))
+        self.zoom_spin.lineEdit().textEdited.connect(self._zoom_text_edited)
+        self.zoom_spin.editingFinished.connect(self._finish_zoom_edit)
         self.fit_page_button = self._button("Fit page", "Fit both whole pages", self.fit_page)
         self.fit_width_button = self._button("Fit width", "Fit both page widths", self.fit_width)
         for widget in (self.zoom_out_button, self.zoom_in_button, self.zoom_spin,
@@ -276,6 +281,16 @@ class CompareWindow(QDialog):
     def next_page(self) -> None:
         self.set_page(self._page + 1)
 
+    def _zoom_text_edited(self, _text: str) -> None:
+        self._zoom_edit_pending = True
+
+    def _finish_zoom_edit(self) -> None:
+        # Committing the same displayed fit percentage is still an explicit
+        # custom-zoom action; merely focusing and leaving the field is not.
+        if self._zoom_edit_pending:
+            self._zoom_edit_pending = False
+            self.set_zoom(self.zoom_spin.value() / 100)
+
     def set_zoom(self, zoom: float) -> None:
         if self._closed or self._linking or not self._page_count:
             return
@@ -285,9 +300,6 @@ class CompareWindow(QDialog):
                 pane.set_zoom(zoom)
         finally:
             self._linking = False
-        self.zoom_spin.blockSignals(True)
-        self.zoom_spin.setValue(self.original_pane.zoom * 100)
-        self.zoom_spin.blockSignals(False)
         self._update_zoom_label()
 
     def zoom_in(self) -> None:
@@ -327,11 +339,24 @@ class CompareWindow(QDialog):
         self._update_zoom_label()
 
     def _update_zoom_label(self) -> None:
-        mode = {"page": "Fit page", "width": "Fit width", None: "Custom zoom"}[self.original_pane.zoom_mode]
-        self.zoom_label.setText(
-            f"{mode} · Original {self.original_pane.zoom * 100:.1f}% / "
-            f"Compressed {self.compressed_pane.zoom * 100:.1f}% · Pan linked"
-        )
+        fit = self.original_pane.zoom_mode
+        mode = {"page": "Fit page", "width": "Fit width", None: "Custom zoom"}[fit]
+        # Fit scales can exceed the custom zoom limits. Show the actual scale
+        # without feeding valueChanged back into set_zoom and leaving fit mode.
+        percent = self.original_pane.zoom * 100
+        with QSignalBlocker(self.zoom_spin):
+            self.zoom_spin.setRange(min(5, percent), max(1600, percent))
+            self.zoom_spin.setPrefix(("Custom" if fit is None else mode) + " ")
+            self.zoom_spin.setValue(percent)
+        # Use Qt's displayed rounding in both places (Python rounds ties differently).
+        scales = (f"Original {self.zoom_spin.value():.1f}% / "
+                  f"Compressed {self.compressed_pane.zoom * 100:.1f}%")
+        self.zoom_label.setText(f"{mode} · {scales} · Pan linked")
+        self.zoom_spin.setAccessibleName(f"{mode}: original zoom percentage; edit for custom linked zoom")
+        description = (f"{mode} · {scales}. The percentage shows the original pane's active scale. "
+                       "Edit to use custom linked zoom for both panes.")
+        self.zoom_spin.setToolTip(description)
+        self.zoom_spin.setAccessibleDescription(description)
 
     def _pan_changed(self, source: PreviewPane, x: float, y: float) -> None:
         if self._closed or self._linking:
