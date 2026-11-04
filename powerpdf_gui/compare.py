@@ -193,7 +193,7 @@ class CompareWindow(QDialog):
             return
         change = f"{(after - before) / before * 100:+.1f}%" if before else "unavailable (original is empty)"
         self.summary_label.setText(
-            f"Original {before:,} bytes → Compressed {after:,} bytes · Size change {change}"
+            f"Original {before:,} bytes; Compressed {after:,} bytes · Size change {change}"
         )
         if after > before:
             self.warning_label.setText("Larger output: the compressed PDF uses more bytes than the original.")
