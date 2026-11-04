@@ -591,7 +591,7 @@ class MainWindow(QMainWindow):
         count = len(self.workspace.queue)
         self.queue_dock.setWindowTitle(f"Queue · {count} PDF{'s' if count != 1 else ''}")
         self.queue_status.setText(f"{count} queued")
-        self.queue_hint.setText("Space adds the selected PDF. Drag to reorder." if not count else "Shift+↑/↓ moves · Delete removes")
+        self.queue_hint.setText("Space adds the selected PDF. Drag to reorder." if not count else "Shift+Up/Down moves · Delete removes")
 
     def add_to_queue(self, paths):
         added = self.workspace.add(paths)
@@ -673,7 +673,7 @@ class MainWindow(QMainWindow):
             self.report_error("Cannot rename", error)
             return False
         self._path_moved(path, destination)
-        self.log(f"Renamed {path.name} → {name}")
+        self.log(f"Renamed {path.name} to {name}")
         self.browser.select_path(destination)
         self.show_path(destination)
         return True
@@ -841,13 +841,13 @@ class MainWindow(QMainWindow):
             "Ctrl/Cmd+O — open PDFs     Ctrl+Shift+O — open folder\n"
             "Ctrl+L — go to folder     Ctrl+R — refresh     Ctrl+T — theme\n"
             "Ctrl+0 — fit page     Ctrl+1 — fit width     Ctrl++ / − — zoom\n"
-            "Queue: Shift+↑/↓ — reorder, Delete — remove\n"
+            "Queue: Shift+Up/Down — reorder, Delete — remove\n"
             "Tab moves focus. Escape cancels a dialog.")
 
     def show_about(self):
         QMessageBox.about(self, "About PowerPDF", f"PowerPDF {VERSION}\nLocal PDF workspace\n\n"
             "Copyright © 2026 PowerPDF contributors\nAGPL-3.0-or-later — you may share and modify this application.\n"
-            "No warranty. See Help → License and notices for the full license.\n\n"
+            "No warranty. See Help > License and notices for the full license.\n\n"
             "PDFium rendering, PySide6 / Qt, and bundled Noto fonts. Your documents stay local.")
 
     def show_license(self):

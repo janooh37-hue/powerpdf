@@ -389,6 +389,28 @@ Acceptance: `uv run --frozen pytest -q test_core_render.py` → **49 passed**;
 metadata divergence, not a claim that the portable Windows bundle was rerun;
 packaging must re-merge `gui` and repeat its installed/portable workflows.
 
+### Bundled-font coverage
+
+Windows/clean-Ubuntu bundle captures exposed missing arrow glyphs masked by host
+font fallback on macOS. The bundled Noto Sans/Noto Sans Arabic cmaps omit U+2191,
+U+2192 and U+2193. Queue/help shortcuts now say `Shift+Up/Down`; rename activity,
+About's menu breadcrumb and compare size summaries use supported words/punctuation.
+No new font, dependency, OFL notice or packaging asset is needed.
+
+`test_gui_fonts.py` parses every non-docstring string literal and f-string
+fragment in the GUI and shared core (including surfaced job/status/error copy).
+It checks each printable codepoint against QRawFont loaded directly from the
+bundled font files, not the system fallback database. Only whitespace and
+nonprinting Unicode control/format characters are exempt. This covers menus,
+palette labels, hints, help, status, buttons, tooltips and accessibility copy.
+Arbitrary filenames, translated OS-native dialogs and dynamically generated
+platform shortcut notation are not app-authored literal strings.
+Acceptance: `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**363 passed, 4 skipped in 112.28s**. The cmap audit first identified all three
+missing arrows, then passed with supported copy. Main/compare README screenshots
+were regenerated and inspected. This does not claim native bundle reruns;
+packaging should repeat Windows/clean-Ubuntu screenshots after re-merging.
+
 ## Where the code lives (one copy)
 
 | Location | What it is |
