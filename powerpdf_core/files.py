@@ -11,6 +11,16 @@ def is_pdf(path: Path) -> bool:
     return path.suffix.lower() == ".pdf" and path.is_file()
 
 
+def compare_pair(path: Path) -> tuple[Path, Path] | None:
+    """An existing original/_small pair, regardless of which member is selected."""
+    if not is_pdf(path):
+        return None
+    original, small = ((path.with_name(path.stem[:-6] + path.suffix), path)
+                       if path.stem.endswith("_small")
+                       else (path, path.with_name(f"{path.stem}_small.pdf")))
+    return (original, small) if is_pdf(original) and is_pdf(small) else None
+
+
 def find_pdfs(paths: Iterable[str | Path]) -> list[Path]:
     """Discover nonrecursively, deduplicate resolved files and sort globally."""
     pdfs: dict[Path, Path] = {}

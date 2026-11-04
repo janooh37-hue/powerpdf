@@ -226,8 +226,7 @@ def test_command_palette_filters_the_real_menu_actions(qtbot, window):
 
 def test_keyboard_actions_have_menu_equivalents_without_fake_future_actions(window):
     assert set(window.actions) >= {"open", "rename", "trash", "reveal", "external", "go", "all_files", "recent", "cycle_theme"}
-    assert set(window.actions) >= {"merge", "split", "compress", "print", "images", "cards"}
-    assert "pages" not in window.actions
+    assert set(window.actions) >= {"merge", "split", "compress", "print", "images", "cards", "pages", "compare"}
     assert window.actions["open_files"].shortcut().matches(QKeySequence(QKeySequence.StandardKey.Open))
 
 @pytest.mark.parametrize("action", ["merge", "split", "compress", "images", "print"])

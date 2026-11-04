@@ -37,14 +37,17 @@ class FilenameEdit(QLineEdit):
     def setText(self, value):
         QLineEdit.setText(self, self._mark + value if value else "")
 
+    def _prefix_length(self):
+        return int(QLineEdit.text(self).startswith(self._mark))
+
     def selectAll(self):
-        QLineEdit.setSelection(self, 1, len(self.text()))
+        self.setSelection(0, len(self.text()))
 
     def setSelection(self, start, length):
-        QLineEdit.setSelection(self, start + 1, length)
+        QLineEdit.setSelection(self, start + self._prefix_length(), length)
 
     def cursorPosition(self):
-        return max(0, QLineEdit.cursorPosition(self) - 1)
+        return max(0, QLineEdit.cursorPosition(self) - self._prefix_length())
 
     def setCursorPosition(self, position):
-        QLineEdit.setCursorPosition(self, position + 1)
+        QLineEdit.setCursorPosition(self, position + self._prefix_length())

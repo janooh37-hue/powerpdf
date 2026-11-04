@@ -39,10 +39,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from powerpdf_core.pages import PageEditSession
-from powerpdf_core.files import is_pdf
+from powerpdf_core.files import compare_pair, is_pdf
 from powerpdf_core.jobs import CancelToken, JobCancelled, JobSpec, run_job
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 SETTINGS = core_settings.settings_path()
 CELL_W, CELL_H = 24, 14  # one page cell of the Pages grid, in terminal cells
 
@@ -1671,12 +1671,9 @@ class PowerPDF(App):
 
     def action_compare(self) -> None:
         path = self.focused_path()
-        if path and is_pdf(path):
-            stem = path.stem
-            original, small = (path.with_name(stem[:-6] + path.suffix), path) if stem.endswith("_small") else (path, path.with_name(f"{stem}_small.pdf"))
-            if is_pdf(original) and is_pdf(small):
-                self.push_screen(CompareScreen(original, small))
-                return
+        if path and (pair := compare_pair(path)):
+            self.push_screen(CompareScreen(*pair))
+            return
         self.notify("Highlight a PDF that has a _small copy next to it (X.pdf and X_small.pdf).", severity="warning")
 
     def action_card(self) -> None:

@@ -1,14 +1,16 @@
 # PowerPDF — handoff
 
-Date: 2026-11-04. Owner: GSSG (Windows 11, PowerShell 7). Version **0.7.0**.
+Date: 2026-11-04. Owner: GSSG (Windows 11, PowerShell 7). Version **0.8.0** (first GUI release).
 
 ## Goal
 
-A personal PDF toolkit for Windows. The main job: take scanned licenses, ID cards and certificates and make
-**small, readable, card-only** copies for web-app uploads and sending to people. It should feel premium.
+An open-source, local desktop PDF workspace for Windows, macOS and Linux, with a
+retained TUI and CLIs. Native Qt filename inputs/display support Arabic without
+terminal bidi workarounds. Its core job remains **small, readable, card-only**
+copies of scanned licenses, IDs and certificates.
 
-`PLAN.md` (all four tiers + folder rename + single source of truth) is **done**; one git commit per item. Branch `main`, pushed to the
-private GitHub repo `janooh37-hue/powerpdf` (`origin`, account `janooh37-hue`, `gh` auth over https).
+The original terminal `PLAN.md` implementation is complete. Desktop product work
+is on branch `gui`; do not merge, tag or publish without owner authorization.
 The open backlog is at the bottom. **Don't build from it until the user picks by number.**
 
 ## Desktop product: shared-engine phase (`gui`)
@@ -258,6 +260,10 @@ output review and safe overwrite confirmation. Workers export immutable geometry
 snapshots, reserve reviewed destinations, check source/destination revisions and
 report actual partial commits. Closing an unsaved workspace asks before discard;
 declining also aborts closing its main browser window.
+Multiple-card loads default to all-kept PDFs in a selected folder; Enter from a
+canvas/strip or Ctrl/Cmd+S preserves that batch-save workflow. J asks for a kept
+JPG folder for multiple cards, but retains the automatic front/back pair for one
+card. Individual/side exports remain explicit choices in the save selector.
 
 The generated `gui_test_fixtures.multi_card_scan` is a local two-page A4,
 four-row-per-page, left-back/right-front vector scan with eight synthetic vehicle
@@ -279,11 +285,93 @@ sizes, metadata and named bookmarks; native file dialogs remain adapter-mocked.
 
 
 
+## Pages grid and compare — Phase 5
+
+`Operations → Pages grid` (`t`) acts on the highlighted PDF, never the queue.
+The grid is a virtualized `QListView`/model/delegate with visible/nearby thumbnail
+requests and a 32 MiB owned-image LRU, not a widget/raster per source page.
+Raster detail adapts to the visible/prefetched set at high desktop DPR so that
+neighbors cannot evict still-visible thumbnails from that budget.
+Stable original page IDs survive rotation, deletion, drag/keyboard reorder and
+undo/redo. Internal drag payloads are scoped to the edit session. Selection is
+used when present, otherwise the current page; rotation adds to native PDF
+rotation rather than replacing it.
+
+Extract defaults to `_extract.pdf`, Save to `_edited.pdf`; source bytes remain
+immutable and the original (including hardlink aliases) cannot be overwritten.
+Workers use `PageExportSnapshot`, so later GUI edits are excluded from an active
+save. Destination review/reservations, source-change checks, staged writes,
+progress/cancel, empty-save disabling and dirty-discard prompts follow the same
+rules as the other workspaces.
+
+`Operations → Compare original / compressed` (`d`) also uses the highlighted
+PDF. Both GUI and TUI use `powerpdf_core.files.compare_pair` to resolve either
+member of an existing original/`_small` pair. Missing pairs explain how to create
+the copy with Compress. Two independent `PreviewPane` workers display actual
+images with linked page/zoom/pan; page navigation stops at the shorter document.
+Sizes and signed percentage change distinguish smaller and larger outputs.
+This is a visual review, not a pixel-diff or content-equivalence assertion.
+
+Packaging adds `powerpdf_gui.pages` and `powerpdf_gui.compare`; the existing
+QtCore/QtGui/QtWidgets modules suffice. These workspaces still use only the
+shared PDFium lane, not QtPdf or QtWebEngine.
+
+Final Phases 4–5 acceptance on Linux:
+`QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**353 passed, 4 skipped in 111.31s**. Skips remain the three Windows ACL cases and
+legacy `gswin64c` integration case. A 128-page vector fixture exercises lazy
+visible rendering, bounded caches, intrinsic-plus-additional rotation, real
+extract/save outputs, undo/redo and revision/cancellation races. High-DPR tests
+retain the entire visible/prefetched raster set within the cache budget.
+Compare tests exercise both input roles, shorter-count bounds, differing page
+sizes/rotation, linked mouse/wheel pan and zoom, stale completions and close.
+
+Final regenerated captures were inspected:
+- `/tmp/gui/cards-workspace.png` — eight-card scan, box, confirmed Arabic name,
+  real unconfirmed OCR suggestions, skipped and guessed markers.
+- `/tmp/gui/cards-save-result.png` — actual combined PDF receipt.
+- `/tmp/gui/pages-grid.png` — 128-page virtual grid, three selected/rotated pages.
+- `/tmp/gui/compare-view.png` — real original/Ghostscript output,
+  **8,529 → 3,917 bytes (−54.1%)**.
+- `/tmp/gui/phases4-5-overview.png` — all four captures together.
+
+Keyboard activation of remembered card labels consumes Return: choosing a label
+does not also fire the dialog's Confirm button. Empty native filename editors
+have no phantom presentation-prefix offset. Accepted page-window closes use
+the normal QDialog lifecycle/finished signal; the main window releases them,
+while declined discard still prevents closing. Native file dialogs are
+adapter-mocked; no physical printer jobs or target-OS bundle qualification are
+claimed by this offscreen suite.
+
+## First GUI release preparation — 0.8.0
+
+Public setup, features, shortcuts, local privacy and third-party licensing now
+live in `README.md`; this file remains the internal engineering handoff.
+Committed `docs/screenshots/` PNGs are offscreen captures of synthetic fixtures,
+not owner documents. Packaging/runtime ownership and owner-only release approval
+remain unchanged; a version bump is not permission to tag or publish artifacts.
+
+The page-grid fixture's first page has native `/Rotate 90`. Adding another 90°
+correctly produces 180° pixels; labels now show additional and total rotation,
+with source/additional/total detail in tooltips/accessibility. Source rotations
+are read once, indexed by stable page ID, not reparsed for every thumbnail.
+Compare's percentage field now shows its active Fit page/Fit width/Custom mode
+and actual original-pane percentage; status retains both pane percentages when
+fit scales differ. Editing a percentage explicitly switches to custom mode.
+
+Release-side acceptance: `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q`
+→ **356 passed, 4 skipped in 112.06s**. The existing four platform/tool skips are
+unchanged. Version consistency covers project/lock metadata, TUI/GUI constants,
+installed package metadata and About text. Public screenshots are copied from
+the regenerated offscreen synthetic-fixture captures, including the clarified
+rotation totals and active fit percentage. No native bundle validation or
+physical printing was performed.
+
 ## Where the code lives (one copy)
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Owner's source checkout. Package `powerpdf` 0.7.0; shared `powerpdf_core`, TUI `powerpdf`, dispatcher `powerpdf_cli`, runtime `pdf_runtime`, CLI adapters `pdf_merge`, `pdf_split`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`; `test_powerpdf.py`, `test_runtime.py`, and `test_core_*.py`. Installer builds run in target-native CI |
+| `C:\Users\GSSG\projects\powerpdf\` | Owner's source checkout. Package `powerpdf` 0.8.0; GUI `powerpdf_gui`, shared `powerpdf_core`, retained TUI/CLI adapters. uv `.venv`, `uv.lock`; tests include real-PDF core behavior and offscreen Qt workspaces. Installer builds run in target-native CI |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 

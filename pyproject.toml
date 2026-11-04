@@ -1,6 +1,6 @@
 [project]
 name = "powerpdf"
-version = "0.7.0"
+version = "0.8.0"
 description = "Local PDF tools with a shared engine for desktop, terminal and command-line workflows"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"

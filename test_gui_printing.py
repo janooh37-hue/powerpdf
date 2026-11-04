@@ -163,7 +163,8 @@ def test_real_pdf_output_and_review_progress_result_screenshots(
     try:
         with qtbot.waitSignal(dialog.completed, timeout=20000) as emitted:
             dialog.start()
-            qtbot.waitUntil(lambda: entered.is_set() and dialog.progress.maximum() == 2, timeout=10000)
+            qtbot.waitUntil(lambda: entered.is_set() and dialog.progress.maximum() == 2
+                           and dialog.progress.value() == 1, timeout=10000)
             assert dialog.progress.value() == 1
             assert not output.exists()  # The first page is staged; the destination is still uncommitted.
             assert not dialog.start_button.isEnabled()

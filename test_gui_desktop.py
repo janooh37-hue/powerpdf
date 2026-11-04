@@ -71,7 +71,7 @@ def test_installed_wheel_assets_and_license(tmp_path, monkeypatch):
     icon = tmp_path / "share/powerpdf/assets/powerpdf.png"
     icon.parent.mkdir(parents=True)
     icon.touch()
-    license_entry = PurePath("powerpdf-0.7.0.dist-info/licenses/LICENSE")
+    license_entry = PurePath("powerpdf-0.8.0.dist-info/licenses/LICENSE")
     license_file = tmp_path / "site-packages" / license_entry
     license_file.parent.mkdir(parents=True)
     license_file.write_text("installed license")

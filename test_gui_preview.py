@@ -447,3 +447,61 @@ def test_parent_deletion_stops_child_worker(qtbot):
     worker = child._worker
     parent.deleteLater()
     qtbot.waitUntil(lambda: not worker._thread.is_alive(), timeout=10000)
+
+
+def test_public_page_zoom_mode_and_pan_linkage_state(qtbot, pane, source):
+    open_ready(qtbot, pane, source)
+    pages, modes, pans = [], [], []
+    pane.page_changed.connect(pages.append)
+    pane.zoom_mode_changed.connect(modes.append)
+    pane.pan_changed.connect(lambda x, y: pans.append((x, y)))
+    assert pane.zoom_mode == "page"
+    with qtbot.waitSignal(pane.ready, timeout=10000):
+        pane.set_page(1)
+    assert pages == [1]
+    with qtbot.waitSignal(pane.ready, timeout=10000):
+        pane.set_zoom(4)
+    assert pane.zoom_mode is None
+    assert modes == [None]
+    pans.clear()
+    pane.set_normalized_pan(.2, .7)
+    assert not pans  # Programmatic synchronization must never feed back.
+    assert pane.normalized_pan == pytest.approx((.2, .7), abs=.005)
+    with qtbot.waitSignal(pane.ready, timeout=10000):
+        pane.set_zoom(3)
+        pane.set_normalized_pan(.3, .6)
+    assert modes == [None]
+    assert not pans
+    assert pane.normalized_pan == pytest.approx((.3, .6), abs=.005)
+    bar = pane.view.horizontalScrollBar()
+    bar.setValue(bar.minimum())
+    assert pans[-1][0] == 0
+    with qtbot.waitSignal(pane.ready, timeout=10000):
+        pane.fit_width()
+    assert pane.zoom_mode == "width"
+    assert modes == [None, "width"]
+    with qtbot.waitSignal(pane.ready, timeout=10000):
+        pane.fit_page()
+    assert modes == [None, "width", "page"]
+    pane.set_controls_visible(False)
+    assert pane.view.isVisible()
+    assert not pane.next_button.isVisible()
+    assert not pane.fit_page_button.isVisible()
+    pane.set_controls_visible(True)
+    assert pane.next_button.isVisible()
+
+
+def test_pan_requested_before_first_image_is_applied_after_layout(qtbot, source):
+    pane = preview.PreviewPane()
+    qtbot.addWidget(pane)
+    try:
+        with qtbot.waitSignal(pane.info_ready, timeout=10000):
+            pane.open_path(source)
+        pane.set_zoom(4)
+        pane.set_normalized_pan(.25, .75)
+        pane.resize(700, 600)
+        with qtbot.waitSignal(pane.ready, timeout=10000):
+            pane.show()
+        assert pane.normalized_pan == pytest.approx((.25, .75), abs=.005)
+    finally:
+        pane.shutdown()
