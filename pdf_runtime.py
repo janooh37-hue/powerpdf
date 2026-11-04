@@ -57,6 +57,14 @@ def host_env() -> dict[str, str]:
     launch; that process-global API cannot safely be changed by this env helper.
     """
     env = os.environ.copy()
+    if not getattr(sys, "frozen", False):
+        return env
+    roots = [root.absolute() for root in bundle_roots()]
+    if "PATH" in env:
+        env["PATH"] = os.pathsep.join(
+            entry for entry in env["PATH"].split(os.pathsep)
+            if not entry or not any(Path(entry).absolute().is_relative_to(root) for root in roots)
+        )
     for name in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
         original = env.pop(name + "_ORIG", None)
         if original is None:
