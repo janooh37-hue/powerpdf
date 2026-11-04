@@ -89,3 +89,46 @@ def test_source_host_environment_preserves_user_loader_paths(monkeypatch):
     monkeypatch.setattr(sys, "frozen", False, raising=False)
     monkeypatch.setenv("LD_LIBRARY_PATH", "/user/libs")
     assert pdf_runtime.host_env()["LD_LIBRARY_PATH"] == "/user/libs"
+
+
+def test_host_launch_restores_windows_dll_directory_on_error(monkeypatch):
+    calls = []
+
+    class Kernel:
+        def GetDllDirectoryW(self, size, buffer):
+            if buffer is not None:
+                buffer.value = r"C:\PowerPDF\_internal"
+            return len(r"C:\PowerPDF\_internal")
+
+        def SetDllDirectoryW(self, value):
+            calls.append(value)
+            return 1
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(pdf_runtime, "_dll_directory_api", lambda: Kernel())
+    with pytest.raises(ValueError, match="launch failed"):
+        with pdf_runtime.host_launch_scope():
+            assert calls == [None]
+            raise ValueError("launch failed")
+    assert calls == [None, r"C:\PowerPDF\_internal"]
+
+
+def test_helper_launch_waits_until_host_scope_restores_directory(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    attempted, launched = threading.Event(), threading.Event()
+
+    def launch_helper():
+        attempted.set()
+        with pdf_runtime.helper_launch_scope():
+            launched.set()
+
+    with pdf_runtime.host_launch_scope():
+        worker = threading.Thread(target=launch_helper)
+        worker.start()
+        assert attempted.wait(1)
+        assert not launched.wait(0.1)
+    worker.join(timeout=1)
+    assert launched.is_set()

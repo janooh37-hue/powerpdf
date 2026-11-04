@@ -1,9 +1,12 @@
 """Resolve bundled helpers and isolate their loader environment from host tools."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import ctypes
 import os
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 
@@ -13,6 +16,53 @@ TOOLS = {
     "fzf": ("fzf/fzf.exe", ("fzf",)),
 }
 _UNIX_TOOLS = {"ghostscript": "ghostscript/bin/gs", "tesseract": "tesseract/bin/tesseract", "fzf": "fzf/bin/fzf"}
+_LAUNCH_LOCK = threading.RLock()
+
+
+def _dll_directory_api():
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.GetDllDirectoryW.argtypes = (ctypes.c_ulong, ctypes.c_wchar_p)
+    api.GetDllDirectoryW.restype = ctypes.c_ulong
+    api.SetDllDirectoryW.argtypes = (ctypes.c_wchar_p,)
+    api.SetDllDirectoryW.restype = ctypes.c_int
+    return api
+
+
+@contextmanager
+def helper_launch_scope():
+    """Serialize helper process creation against frozen Windows host launches.
+
+    Wrap Popen creation only; do not hold this scope while waiting for a helper.
+    The returned process still needs env=helper_env(executable).
+    """
+    with _LAUNCH_LOCK:
+        yield
+
+
+@contextmanager
+def host_launch_scope():
+    """Temporarily undo PyInstaller's Windows process-global DLL directory.
+
+    Every app-owned helper launch must use helper_launch_scope so another thread
+    cannot start a child while this reset is active. Pair with env=host_env()
+    for subprocess host launches; native desktop APIs can use this scope alone.
+    """
+    with _LAUNCH_LOCK:
+        if sys.platform != "win32" or not getattr(sys, "frozen", False):
+            yield
+            return
+        api = _dll_directory_api()
+        length = api.GetDllDirectoryW(0, None)
+        previous = ctypes.create_unicode_buffer(length + 1)
+        if length and not api.GetDllDirectoryW(len(previous), previous):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not api.SetDllDirectoryW(None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            if not api.SetDllDirectoryW(previous.value or None):
+                raise ctypes.WinError(ctypes.get_last_error())
 
 
 def bundle_roots() -> list[Path]:
@@ -53,8 +103,8 @@ def resolve_tool(tool: str) -> str | None:
 def host_env() -> dict[str, str]:
     """Undo freezer loader paths before spawning OS open/reveal utilities.
 
-    On Windows, callers must additionally reset SetDllDirectoryW around a host
-    launch; that process-global API cannot safely be changed by this env helper.
+    On frozen Windows, also wrap process creation in host_launch_scope() to
+    reset the process-global DLL directory without racing helper launches.
     """
     env = os.environ.copy()
     if not getattr(sys, "frozen", False):
