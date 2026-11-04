@@ -300,6 +300,8 @@ class MainWindow(QMainWindow):
             operations.addAction(a(key, label, lambda checked=False, key=key: self.launch_operation(key),
                                    QKeySequence.StandardKey.Print if key == "print" else None))
         operations.addAction(a("cards", "Card workspace…", self.launch_cards))
+        operations.addAction(a("pages", "Pages grid…", self.launch_pages))
+        operations.addAction(a("compare", "Compare original / compressed…", self.launch_compare))
         view = self.menuBar().addMenu("&View")
         view.addAction(a("all_files", "Show all files", self.toggle_all_files, checkable=True))
         view.addSeparator()
@@ -437,6 +439,27 @@ class MainWindow(QMainWindow):
         from .cards import CardsWindow
         dialog = CardsWindow(targets, self, settings_path=self.settings_store.path)
         dialog.completed.connect(self._edit_completed)
+        self._show_edit_workspace(dialog)
+
+    def launch_pages(self):
+        if self.selected is None or not files.is_pdf(self.selected):
+            QMessageBox.information(self, "Select a PDF", "Highlight one PDF to edit its pages. This action does not use the queue.")
+            return
+        from .pages import PagesWindow
+        dialog = PagesWindow(self.selected, self)
+        dialog.completed.connect(self._edit_completed)
+        self._show_edit_workspace(dialog)
+
+    def launch_compare(self):
+        if self.selected is None or files.compare_pair(self.selected) is None:
+            QMessageBox.information(self, "Compressed copy not found",
+                                    "Highlight an original PDF or its _small.pdf copy. Both must be in the same folder. "
+                                    "Use Compress to create the missing _small.pdf copy.")
+            return
+        from .compare import CompareWindow
+        self._show_edit_workspace(CompareWindow(self.selected, self))
+
+    def _show_edit_workspace(self, dialog):
         self._edit_workspaces.append(dialog)
         dialog.finished.connect(lambda result, dialog=dialog: self._edit_workspaces.remove(dialog)
                                 if dialog in self._edit_workspaces else None)
@@ -447,13 +470,15 @@ class MainWindow(QMainWindow):
             return
         outputs = tuple(result.outputs)
         if outputs:
-            self.log(f"{len(outputs)} card output(s) saved.")
+            self.log(f"{len(outputs)} workspace output(s) saved.")
             self.workspace.remember(*(path for path in outputs if files.is_pdf(path)))
             self._persist_recent()
             self.refresh_lists()
             self.browser.refresh()
         if error := getattr(result, "error", ""):
-            self.log(f"Card save: {error}")
+            self.log(f"Workspace save: {error}")
+        for outcome in getattr(result, "errors", ()):
+            self.log(f"Workspace save: {outcome.error}")
 
     def _operation_completed(self, result):
         if self._closing:
@@ -772,6 +797,8 @@ class MainWindow(QMainWindow):
             Qt.Key.Key_I: lambda: self.launch_operation("images"),
             Qt.Key.Key_P: lambda: self.launch_operation("print"),
             Qt.Key.Key_K: self.launch_cards,
+            Qt.Key.Key_T: self.launch_pages,
+            Qt.Key.Key_D: self.launch_compare,
             Qt.Key.Key_Space: self.toggle_queued, Qt.Key.Key_O: self.open_selected,
             Qt.Key.Key_R: self.toggle_recent, Qt.Key.Key_G: self.go_to_folder,
             Qt.Key.Key_E: self.reveal_selected, Qt.Key.Key_A: self.queue_folder,
@@ -809,6 +836,7 @@ class MainWindow(QMainWindow):
             "[ / ] — page flip     F — all files     Q — quit\n\n"
             "M — merge     S — split     C — compress     I — images     P — print\n"
             "K — card workspace (scan map, crops, masks, names and save)\n"
+            "T — pages grid (highlighted PDF)     D — compare original / _small\n"
             "Ctrl/Cmd+P — print dialog (never automatically submits)\n\n"
             "Ctrl/Cmd+O — open PDFs     Ctrl+Shift+O — open folder\n"
             "Ctrl+L — go to folder     Ctrl+R — refresh     Ctrl+T — theme\n"
