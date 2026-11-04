@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.selected: Path | None = None
         self._closing = False
         self._operation_dialogs = []
+        self._edit_workspaces = []
         self.theme_name = gui.get("theme", self.settings.get("theme", "powerpdf"))
         app = QApplication.instance()
         self._folder_changed(self.root)
@@ -298,6 +299,7 @@ class MainWindow(QMainWindow):
         for key, label in (("merge", "Merge…"), ("split", "Split…"), ("compress", "Compress…"), ("images", "Images…"), ("print", "Print…")):
             operations.addAction(a(key, label, lambda checked=False, key=key: self.launch_operation(key),
                                    QKeySequence.StandardKey.Print if key == "print" else None))
+        operations.addAction(a("cards", "Card workspace…", self.launch_cards))
         view = self.menuBar().addMenu("&View")
         view.addAction(a("all_files", "Show all files", self.toggle_all_files, checkable=True))
         view.addSeparator()
@@ -426,6 +428,32 @@ class MainWindow(QMainWindow):
         self._operation_dialogs.append(dialog)
         dialog.finished.connect(lambda result, dialog=dialog: self._operation_dialogs.remove(dialog) if dialog in self._operation_dialogs else None)
         dialog.show()
+
+    def launch_cards(self):
+        targets = self.workspace.targets(self.selected)
+        if not targets:
+            QMessageBox.information(self, "Select PDFs", "Select or queue a PDF scan first.")
+            return
+        from .cards import CardsWindow
+        dialog = CardsWindow(targets, self, settings_path=self.settings_store.path)
+        dialog.completed.connect(self._edit_completed)
+        self._edit_workspaces.append(dialog)
+        dialog.finished.connect(lambda result, dialog=dialog: self._edit_workspaces.remove(dialog)
+                                if dialog in self._edit_workspaces else None)
+        dialog.show()
+
+    def _edit_completed(self, result):
+        if self._closing:
+            return
+        outputs = tuple(result.outputs)
+        if outputs:
+            self.log(f"{len(outputs)} card output(s) saved.")
+            self.workspace.remember(*(path for path in outputs if files.is_pdf(path)))
+            self._persist_recent()
+            self.refresh_lists()
+            self.browser.refresh()
+        if error := getattr(result, "error", ""):
+            self.log(f"Card save: {error}")
 
     def _operation_completed(self, result):
         if self._closing:
@@ -743,6 +771,7 @@ class MainWindow(QMainWindow):
             Qt.Key.Key_C: lambda: self.launch_operation("compress"),
             Qt.Key.Key_I: lambda: self.launch_operation("images"),
             Qt.Key.Key_P: lambda: self.launch_operation("print"),
+            Qt.Key.Key_K: self.launch_cards,
             Qt.Key.Key_Space: self.toggle_queued, Qt.Key.Key_O: self.open_selected,
             Qt.Key.Key_R: self.toggle_recent, Qt.Key.Key_G: self.go_to_folder,
             Qt.Key.Key_E: self.reveal_selected, Qt.Key.Key_A: self.queue_folder,
@@ -779,6 +808,7 @@ class MainWindow(QMainWindow):
             "E — reveal     F2 — rename     Delete — Trash / remove queue entry\n"
             "[ / ] — page flip     F — all files     Q — quit\n\n"
             "M — merge     S — split     C — compress     I — images     P — print\n"
+            "K — card workspace (scan map, crops, masks, names and save)\n"
             "Ctrl/Cmd+P — print dialog (never automatically submits)\n\n"
             "Ctrl/Cmd+O — open PDFs     Ctrl+Shift+O — open folder\n"
             "Ctrl+L — go to folder     Ctrl+R — refresh     Ctrl+T — theme\n"
@@ -822,6 +852,10 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, title, str(error))
 
     def closeEvent(self, event):
+        for dialog in list(self._edit_workspaces):
+            if not dialog.close():
+                event.ignore()
+                return
         self._closing = True
         for dialog in list(self._operation_dialogs):
             dialog.shutdown()
