@@ -72,7 +72,7 @@ def macos_helpers() -> None:
     run("make", "-j3", cwd=zlib)
     run("make", "install", cwd=zlib)
     png = source("libpng")
-    cmake_build("png", png, prefix, "-DPNG_SHARED=OFF", "-DPNG_TESTS=OFF",
+    cmake_build("png", png, prefix, "-DPNG_SHARED=OFF", "-DPNG_FRAMEWORK=OFF", "-DPNG_TESTS=OFF",
                 f"-DZLIB_LIBRARY={prefix}/lib/libz.a", f"-DZLIB_INCLUDE_DIR={prefix}/include")
     lept = source("leptonica")
     cmake_build("leptonica", lept, prefix, "-DBUILD_PROG=OFF", "-DENABLE_GIF=OFF", "-DENABLE_JPEG=OFF",
@@ -83,14 +83,13 @@ def macos_helpers() -> None:
     cmake_build("tesseract", tess, prefix, "-DBUILD_TRAINING_TOOLS=OFF", "-DBUILD_TESTS=OFF",
                 "-DDISABLE_ARCHIVE=ON", "-DDISABLE_CURL=ON", "-DOPENMP_BUILD=OFF",
                 "-DDISABLE_TIFF=ON", "-DGRAPHICS_DISABLED=ON", "-DENABLE_NATIVE=OFF",
-                "-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE",
                 f"-DLeptonica_DIR={prefix}/lib/cmake/leptonica")
     gs = source("ghostscript")
     gs_prefix = BUILD / "gs-prefix"
     env = os.environ.copy()
-    env.update({"PKG_CONFIG": "/usr/bin/false", "MACOSX_DEPLOYMENT_TARGET": "13.0"})
+    env.update({"PKG_CONFIG": "/usr/bin/false", "PKGCONFIG": "/usr/bin/false", "MACOSX_DEPLOYMENT_TARGET": "13.0"})
     run("./configure", f"--prefix={gs_prefix}", "--without-x", "--disable-cups", "--disable-gtk",
-        "--without-tesseract", "--without-libidn", "--without-libpaper", "--without-fontconfig",
+        "--without-tesseract", "--without-libidn", "--without-libpaper", "--disable-fontconfig", "--disable-dbus",
         "--enable-compile-inits", cwd=gs, env=env)
     run("make", "-j3", cwd=gs, env=env)
     run("make", "install", cwd=gs, env=env)
@@ -101,10 +100,13 @@ def macos_helpers() -> None:
         run("codesign", "--force", "-s", "-", target)
     for part in ("lib", "Resource", "iccprofiles"):
         shutil.copytree(gs / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
-    for name, src, license_name in (("Ghostscript", gs, "COPYING"), ("Tesseract", tess, "LICENSE"),
-                                    ("Leptonica", lept, "leptonica-license.txt"), ("libpng", png, "LICENSE"),
-                                    ("zlib", zlib, "LICENSE")):
-        shutil.copy2(src / license_name, LICENSES / (name + ".txt"))
+    for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("zlib", zlib)):
+        # Static codec libraries retain their own notices, not only GS's AGPL.
+        for license_file in src.rglob("*"):
+            if license_file.is_file() and license_file.name.lower().startswith(("license", "copying", "copyright", "notice")):
+                destination = LICENSES / name / license_file.relative_to(src)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(license_file, destination)
     proof = []
     for binary in (VENDOR / "ghostscript/bin/gs", VENDOR / "tesseract/bin/tesseract"):
         output = subprocess.check_output(["otool", "-L", str(binary)], text=True)
@@ -148,7 +150,14 @@ def linux_helpers() -> None:
         if (gs_share / part).exists():
             shutil.copytree(gs_share / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
     shutil.copytree(extracted / "usr/share/fonts/type1/urw-base35", VENDOR / "ghostscript/Resource/Font", dirs_exist_ok=True)
-    shutil.copytree(extracted / "usr/share/doc", LICENSES / "ubuntu", dirs_exist_ok=True, symlinks=False)
+    # Debian copyright files contain each package's licensing terms. Unrelated
+    # NEWS/changelog symlinks can be dangling even in Ubuntu's own package.
+    for package in lock:
+        copyright_file = extracted / "usr/share/doc" / package["package"] / "copyright"
+        destination = LICENSES / "ubuntu" / package["package"]
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(copyright_file, destination / "copyright")
+    shutil.copytree(extracted / "usr/share/common-licenses", LICENSES / "ubuntu/common-licenses", dirs_exist_ok=True)
     shutil.copy2(ROOT / "packaging/linux-runtime-lock.json", STAGE / "LINUX-PROVENANCE.json")
     # Package copyright files contain upstream source links; this exact source
     # archive endpoint also retains Ubuntu's security patches and build recipes.
@@ -174,7 +183,7 @@ def common_data() -> None:
               VENDOR / "tesseract/tessdata" / (language + ".traineddata"))
     gs_source = fetch(INPUTS["ghostscript"], DIST / "ghostscript-10.08.0-source.tar.xz")
     with tarfile.open(gs_source) as archive:
-        copying = next(member for member in archive if member.name.endswith("/COPYING"))
+        copying = archive.getmember("ghostscript-10.08.0/doc/COPYING")
         (LICENSES / "PowerPDF-AGPL-3.0-or-later.txt").write_bytes(archive.extractfile(copying).read())
     shutil.copy2(ROOT / "packaging/desktop-inputs.json", STAGE / "SOURCE-INPUTS.json")
     shutil.copy2(ROOT / "packaging/DESKTOP-NOTICES.txt", STAGE / "THIRD-PARTY-NOTICES.txt")

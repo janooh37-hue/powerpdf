@@ -1,5 +1,12 @@
 [
   {
+    "package": "base-files",
+    "version": "12ubuntu4.7",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/b/base-files/base-files_12ubuntu4.7_amd64.deb",
+    "sha256": "543f50e12da693710e1d606af61029fa599cde7eb0eaee2c0e34fa47848f4533",
+    "source": "base-files"
+  },
+  {
     "package": "poppler-data",
     "version": "0.4.11-1",
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/poppler-data/poppler-data_0.4.11-1_all.deb",

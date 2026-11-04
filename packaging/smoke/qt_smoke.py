@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 from pathlib import Path
 import subprocess
@@ -77,11 +78,11 @@ def main() -> int:
                    f"-sOutputFile={compressed}", str(source))
         if compressed.stat().st_size < 100:
             raise RuntimeError("Ghostscript produced an invalid output")
-        with pdfium.PdfDocument(str(compressed)) as rendered:
-            bitmap = rendered[0].render(scale=1.5)
-            image = bitmap.to_pil().convert("RGB")
-            owned = QImage(image.tobytes(), image.width, image.height, image.width * 3, QImage.Format.Format_RGB888).copy()
-            bitmap.close()
+        with closing(pdfium.PdfDocument(compressed.read_bytes())) as rendered:
+            with closing(rendered[0]) as rendered_page:
+                with closing(rendered_page.render(scale=1.5)) as bitmap:
+                    image = bitmap.to_pil().convert("RGB")
+                    owned = QImage(image.tobytes(), image.width, image.height, image.width * 3, QImage.Format.Format_RGB888).copy()
         preview = QLabel()
         preview.setPixmap(QPixmap.fromImage(owned))
         preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
