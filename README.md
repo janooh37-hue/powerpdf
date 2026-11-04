@@ -97,7 +97,7 @@ Single-letter workspace shortcuts apply when you are **not typing into a text fi
 | `Ctrl+L` / `Ctrl+R` | Go to a folder / refresh |
 | `Space` | Toggle the selected PDF in the queue |
 | `A` / `X` | Queue the current folder / clear the queue |
-| `Shift+↑` / `Shift+↓` | Reorder the selected queue entry |
+| `Shift+Up` / `Shift+Down` | Reorder the selected queue entry |
 | `[` / `]` | Previous / next preview page |
 | `Ctrl+0` / `Ctrl+1` | Fit page / fit width |
 | `M` / `S` / `C` / `I` | Merge / split / compress / images |
@@ -121,11 +121,11 @@ Requirements:
 
 Install Ghostscript and Tesseract with your operating system's package manager or their official distributions. Unlike packaged releases, `uv sync` installs Python dependencies, not those external programs or their language data.
 
-The commands below follow the `gui` development branch. You can instead unpack
-the source archive for a published release and run the same `uv` commands there.
+You can also unpack the source archive for a published release and run the same
+`uv` commands from that directory.
 
 ```sh
-git clone --branch gui https://github.com/janooh37-hue/powerpdf.git
+git clone https://github.com/janooh37-hue/powerpdf.git
 cd powerpdf
 uv sync
 
