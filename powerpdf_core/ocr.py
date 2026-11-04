@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import re
 import subprocess
+import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,8 @@ from .cards import Rect, cut, _check_cancel
 PLATE = re.compile(r"(?<!\d)(\d{1,2}) ?[/|] ?(\d{3,6})(?!\d)")
 EMIRATES_ID = re.compile(r"(?<!\d)784 ?-? ?(\d{4}) ?-? ?(\d{7}) ?-? ?(\d)(?!\d)")
 READINGS = ((0.0, 1.0, 1.0, 140), (0.0, 1.0, 1.0, 110), (0.0, 1.0, 1.5, 110), (0.22, 0.45, 1.5, 110), (0.22, 0.45, 2.0, 120))
+# Multiple desktop workspaces share the same process-wide child-process budget.
+_CARD_OCR_SLOTS = threading.BoundedSemaphore(4)
 
 
 @dataclass(frozen=True)
@@ -131,14 +134,19 @@ def read_names(cards: Iterable[OCRCard], *, executable: str | None = None, data_
         return
 
     def read(card: OCRCard) -> OCRResult:
-        _check_cancel(cancel)
-        sides = [cut(page, rect) for page, rect in zip(card.pages, card.rects)]
+        while not _CARD_OCR_SLOTS.acquire(timeout=0.1):
+            _check_cancel(cancel)
+        sides = []
         try:
+            _check_cancel(cancel)
+            for page, rect in zip(card.pages, card.rects):
+                sides.append(cut(page, rect))
             found = suggest_name(sides, executable=executable, data_dir=data_dir, cancel=cancel)
             return OCRResult(card.card_id, card.revision, found[0], found[1]) if found else OCRResult(card.card_id, card.revision, None)
         finally:
             for side in sides:
                 side.close()
+            _CARD_OCR_SLOTS.release()
 
     requests = iter(cards)
     with ThreadPoolExecutor(max_workers=4, thread_name_prefix="card-ocr") as pool:

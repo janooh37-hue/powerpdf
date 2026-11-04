@@ -141,10 +141,19 @@ def cut_matrix(rect: Rect) -> np.ndarray:
     return m
 
 
+def _crop_size(rect: Rect) -> tuple[int, int]:
+    (cx, cy), (w, h), angle = rect
+    if not all(math.isfinite(value) for value in (cx, cy, w, h, angle)) or min(w, h) <= 0:
+        raise ValueError("Crop geometry must be finite with positive dimensions")
+    size = max(1, round(w)), max(1, round(h))
+    if size[0] * size[1] > MAX_PAGE_PIXELS or max(size) >= 32767:
+        raise ValueError("Crop exceeds the 32-million-pixel/32766-pixel-side card limit; reduce its dimensions")
+    return size
+
+
 def cut(img: np.ndarray, rect: Rect) -> Image.Image:
     """The rect's contents, rotated upright."""
-    (_, _), (w, h), _ = rect
-    size = (max(1, round(w)), max(1, round(h)))
+    size = _crop_size(rect)
     return Image.fromarray(cv2.warpAffine(img, cut_matrix(rect), size, flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255)))
 
 
@@ -398,9 +407,13 @@ class ExportSnapshot:
 
             return save_batch(jobs(), folder, sources=self.sources, cancel=cancel, progress=progress, before_commit=before_commit)
         if len(paths) != 1 or len(outputs) not in (1, 2):
-            raise ValueError("Choose one combined PDF or one card's two JPGs")
-        if len(outputs) == 2 and len(self.cards) != 1:
-            raise ValueError("Two JPG destinations can save only one card")
+            raise ValueError("Choose one PDF, one side's JPG, or one card's two JPGs")
+        jpeg = all(path.suffix.lower() in (".jpg", ".jpeg") for path in outputs)
+        if jpeg:
+            if len(self.cards) != 1 or len(self.cards[0].pages) != len(outputs):
+                raise ValueError("Each JPG destination must match exactly one captured card side")
+        elif len(outputs) != 1 or outputs[0].suffix.lower() != ".pdf":
+            raise ValueError("Choose one PDF or matching JPG destinations")
         staging = staging_dir(outputs[0].parent)
         sides = []
         try:
@@ -409,10 +422,10 @@ class ExportSnapshot:
                 sides.extend(card.cuts())
             boxes = [side for card in self.cards for side in card.boxes]
             staged = [staging / f"{i}{path.suffix}" for i, path in enumerate(outputs)]
-            if len(staged) == 1:
-                _encode_cards(sides, staged[0], boxes, titles)
-            else:
+            if jpeg:
                 _encode_jpgs(sides, staged, boxes)
+            else:
+                _encode_cards(sides, staged[0], boxes, titles)
             before_commit()
             return commit_files(zip(staged, outputs), cancel=cancel)
         finally:
@@ -440,6 +453,7 @@ class CardEditSession:
             raise ValueError("A source PDF changed during card loading; reload the scan")
         self.source_revisions = current_revisions if source_revisions is None else source_revisions
         self.cards = [Card(card.pages[:], card.rects[:], card.guessed[:], card.where) for card in cards]
+        self._original_rects = tuple(tuple(card.rects) for card in cards)
         self.card_boxes: list[list[list[Box]]] = [[[], []] for _ in cards]
         self.names: list[str | None] = [None] * len(cards)
         self.suggested: list[tuple[str, int] | None] = [None] * len(cards)
@@ -451,6 +465,7 @@ class CardEditSession:
         self.revisions = [0] * len(cards)
         self._undo: list[tuple] = []
         self._redo: list[tuple] = []
+        self._edit_group: tuple[int, int] | None = None
 
     @property
     def card(self) -> Card:
@@ -476,8 +491,29 @@ class CardEditSession:
             self.index, self.side, self.active,
         )
 
+    def begin_edit(self) -> None:
+        """Group successive commands on this card into one undoable gesture.
+
+        Revisions still advance for every command, so in-flight OCR cannot match
+        intermediate geometry. Adapters must end the gesture before navigating.
+        Ordinary ungrouped commands retain the TUI's one-command undo semantics.
+        """
+        if self._edit_group is not None:
+            raise RuntimeError("An edit gesture is already active")
+        self._edit_group = (self.index, len(self._undo))
+
+    def end_edit(self) -> None:
+        """Finish a gesture; a click without commands creates no history entry."""
+        self._edit_group = None
+
     def _record(self, index: int, *, invalidate: bool = True) -> None:
-        self._undo.append((index, invalidate, self._state()))
+        if self._edit_group is not None and self._edit_group[0] != index:
+            raise RuntimeError("End the edit gesture before changing cards")
+        if self._edit_group is None or len(self._undo) == self._edit_group[1]:
+            self._undo.append((index, invalidate, self._state()))
+        elif invalidate and not self._undo[-1][1]:
+            recorded_index, _, state = self._undo[-1]
+            self._undo[-1] = (recorded_index, True, state)
         self._redo.clear()
         if invalidate:
             self.revisions[index] += 1
@@ -489,6 +525,7 @@ class CardEditSession:
             card.pages, card.rects, card.guessed = pages, rects, guessed
 
     def _travel(self, source: list, target: list) -> bool:
+        self.end_edit()
         if not source:
             return False
         index, invalidate, state = source.pop()
@@ -559,16 +596,57 @@ class CardEditSession:
             self.active = None
 
     def change(self, dx: float, dy: float, dw: float = 0, dh: float = 0, da: float = 0) -> None:
-        self._record(self.index)
         boxes = self.boxes[self.side]
         if self.active is not None and not da:
+            self._record(self.index)
             cx, cy, w, h = boxes[self.active]
             boxes[self.active] = (cx + dx, cy + dy, max(8, w + dw), max(8, h + dh))
             return
-        (cx, cy), (w, h), angle = old = self.rects[self.side]
-        self.rects[self.side] = new = ((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da)
-        self.boxes[self.side] = carry(boxes, old, new)
+        (cx, cy), (w, h), angle = self.rects[self.side]
+        self.set_crop(((cx + dx, cy + dy), (max(20, w + dw), max(20, h + dh)), angle + da))
+
+    def set_crop(self, rect: Rect) -> None:
+        """Set native scan-pixel geometry, carrying masks through the core affine."""
+        (cx, cy), (w, h), angle = rect
+        if not all(math.isfinite(value) for value in (cx, cy, w, h, angle)):
+            raise ValueError("Crop geometry must be finite")
+        if w < 20 or h < 20:
+            raise ValueError("Crop dimensions must be at least 20 source pixels")
+        _crop_size(rect)
+        if rect == self.rects[self.side]:
+            return
+        self._record(self.index)
+        old = self.rects[self.side]
+        self.rects[self.side] = rect
+        self.boxes[self.side] = carry(self.boxes[self.side], old, rect)
         self.card.guessed[self.side] = False
+
+    def set_box(self, box: Box) -> None:
+        """Set the selected mask in cropped-side pixels, never screen pixels."""
+        if self.active is None:
+            raise ValueError("Select a black box first")
+        if not all(math.isfinite(value) for value in box) or min(box[2:]) < 8:
+            raise ValueError("Box geometry must be finite and at least 8 pixels")
+        if box == self.boxes[self.side][self.active]:
+            return
+        self._record(self.index)
+        self.boxes[self.side][self.active] = box
+
+    def rotate_crop(self, angle: float) -> None:
+        """Rotate a crop; quarter turns exchange its dimensions to retain content.
+
+        Masks retain the existing carry() axis-aligned page-location semantics.
+        Small tilt commands leave crop dimensions unchanged.
+        """
+        center, (w, h), current = self.rects[self.side]
+        if angle % 180 in (90, -90):
+            w, h = h, w
+        self.set_crop((center, (w, h), current + angle))
+
+    def reset_crop(self) -> None:
+        """Restore the detected crop for this side, respecting manual side swaps."""
+        side = 1 - self.side if self.swapped[self.index] else self.side
+        self.set_crop(self._original_rects[self.index][side])
 
     def kept(self) -> list[int]:
         return [index for index in range(len(self.cards)) if index not in self.skipped]
