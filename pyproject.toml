@@ -1,13 +1,17 @@
 [project]
 name = "powerpdf"
 version = "0.7.0"
-description = "A pixel-vibe terminal UI to explore, preview, merge, split, print, compress, card, pages, redact, compare and save PDFs as images"
+description = "Local PDF tools with a shared engine for desktop, terminal and command-line workflows"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "numpy>=2.5.3",
     "opencv-python-headless>=5.0.0.93",
     "pypdf>=6",
     "pypdfium2>=4",
+    "PySide6==6.10.3",
+    "platformdirs>=4.4",
     "send2trash>=2.1.0",
     "textual>=8",
     "textual-image>=0.14",
@@ -21,11 +25,12 @@ pdfcompress = "pdf_compress:main"
 pdfimage = "pdf_image:main"
 
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["powerpdf", "powerpdf_cli", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_card", "pdf_compress", "pdf_image"]
+py-modules = ["powerpdf", "powerpdf_cli", "pdf_runtime", "pdf_merge", "pdf_split", "pdf_compress", "pdf_image"]
+packages = ["powerpdf_core"]
 
 [dependency-groups]
 dev = [
