@@ -8,6 +8,8 @@ import sys
 from importlib.metadata import version
 from pathlib import Path
 
+from pdf_runtime import host_env
+
 
 def main() -> int | None:
     args = sys.argv[1:]
@@ -15,10 +17,9 @@ def main() -> int | None:
         print(f"powerpdf {version('powerpdf')}")
         return 0
     if args == ["--runtime-info"]:
-        from pdf_card import TESSERACT
         from pdf_runtime import resolve_tool
         print(json.dumps({"ghostscript": resolve_tool("ghostscript"),
-                          "tesseract": TESSERACT, "fzf": resolve_tool("fzf")}))
+                          "tesseract": resolve_tool("tesseract"), "fzf": resolve_tool("fzf")}))
         return 0
     if len(args) >= 2 and args[0] == "--cli":
         command = args[1]
@@ -26,7 +27,7 @@ def main() -> int | None:
         if command == "print":
             script = Path(__file__).with_name("pdf_print.ps1")
             return subprocess.call(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                                    "-File", str(script), *args[2:]])
+                                    "-File", str(script), *args[2:]], env=host_env())
         if command in ("split", "merge", "compress", "image"):
             return importlib.import_module(f"pdf_{command}").main()
         raise SystemExit(f"Unknown PowerPDF command: {command}")

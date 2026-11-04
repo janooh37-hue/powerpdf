@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import pypdfium2 as pdfium
+from powerpdf_core.render import RenderSession
 import pytest
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
@@ -17,7 +17,7 @@ from textual import events
 from textual.widgets import Input, Label, RichLog
 from textual_image.renderable import SixelImage, TGPImage
 
-import pdf_card
+from powerpdf_core import cards as core_cards, ocr
 import powerpdf
 from powerpdf import FileTree, PowerPDF, PromptDialog, Splash
 
@@ -30,7 +30,8 @@ def isolated_settings(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def no_ocr(monkeypatch):
     """The card screen reads names with Tesseract in the background; tests script it instead (deterministic, fast)."""
-    monkeypatch.setattr(pdf_card, "suggest_name", lambda sides: None)
+    monkeypatch.setattr(ocr, "suggest_name", lambda sides, **kwargs: None)
+    monkeypatch.setattr(ocr, "resolve_tesseract", lambda: __file__)
 
 
 def make_pdf(path: Path, pages: int = 1, size: int = 100) -> Path:
@@ -183,8 +184,8 @@ def test_images_one_per_page_capped_at_a4_and_rerun_drops_stale_pages(tmp_path):
 def test_outputs_get_the_folders_permissions(tmp_path, convert):
     """Staging in a tempfile.mkdtemp folder gave outputs an owner-only ACL (SYSTEM, Administrators, OWNER RIGHTS):
     from an elevated shell the owner is Administrators, so Photos and Explorer couldn't open the JPGs."""
-    from pdf_image import to_images
-    from pdf_split import split_pdf
+    from powerpdf_core.images import to_images
+    from powerpdf_core.split import split_pdf
     folder = tmp_path / "plain"
     folder.mkdir()
     subprocess.run(["icacls", str(folder), "/grant", "*S-1-1-0:(OI)(CI)R"], check=True, capture_output=True)  # Everyone may read
@@ -481,7 +482,7 @@ def test_card_front_and_back_as_card_sized_pages(tmp_path):
         assert isinstance(screen, powerpdf.CardScreen)
         for (_, (w, h), angle), expected in zip(screen.rects, (5, -3)):
             assert abs(w - 1011) < 8 and abs(h - 638) < 8 and abs(angle - expected) < 0.5
-        corner = np.asarray(pdf_card.cut(screen.pages[0], screen.rects[0]))[5:45, 5:45].astype(int)
+        corner = np.asarray(core_cards.cut(screen.pages[0], screen.rects[0]))[5:45, 5:45].astype(int)
         assert abs(corner - FRONT).max() < 12  # straightened: the cut's corner is card, not lid
 
         before = [angle for _, _, angle in screen.rects]
@@ -492,11 +493,10 @@ def test_card_front_and_back_as_card_sized_pages(tmp_path):
         await submit(app, pilot)
         output = tmp_path / "scan_card.pdf"
         assert app.recent[0] == output and not isinstance(app.screen, powerpdf.CardScreen)
-        pdf = pdfium.PdfDocument(output)
-        assert len(pdf) == 2  # card-sized pages at 150 dpi (1011 x 638 px at 300 dpi -> 506 x 319 px = 243 x 153 pt), front first
-        assert all(abs(w - 243) < 2 and abs(h - 153) < 2 for w, h in (pdf[i].get_size() for i in range(2)))
-        mids = [np.asarray(pdf[i].render(scale=150 / 72).to_pil().convert("RGB"))[160, 253].astype(int) for i in range(2)]
-        pdf.close()
+        with RenderSession(output) as pdf:
+            assert pdf.info.page_count == 2  # card-sized pages at 150 dpi, front first
+            assert all(abs(w - 243) < 2 and abs(h - 153) < 2 for w, h in pdf.info.page_sizes)
+            mids = [np.asarray(pdf.render(i, scale=150 / 72, purpose="test").convert("RGB"))[160, 253].astype(int) for i in range(2)]
         assert abs(mids[0] - FRONT).max() < 12 and abs(mids[1] - BACK).max() < 12  # the card fills the page
         reader = PdfReader(output)
         assert set(reader.metadata or {}) <= {"/Producer"} and all(len(page.images) == 1 for page in reader.pages)
@@ -580,8 +580,8 @@ def card_page(cards: list[tuple[tuple[int, int], float, tuple[int, int, int]]]) 
     return img
 
 
-def side_color(card: pdf_card.Card, side: int) -> np.ndarray:
-    crop = np.asarray(pdf_card.cut(card.pages[side], card.rects[side]))
+def side_color(card: core_cards.Card, side: int) -> np.ndarray:
+    crop = np.asarray(core_cards.cut(card.pages[side], card.rects[side]))
     return crop[crop.shape[0] // 2, crop.shape[1] // 2].astype(int)
 
 
@@ -590,7 +590,7 @@ def test_stacked_cards_pair_top_front_bottom_back_per_page():
     colors = [(200, 60, 60), (60, 200, 60), (60, 60, 200), (200, 200, 60)]
     pages = [card_page([((1240, 1000), 2, colors[0]), ((1240, 2400), -1, colors[1])]),
              card_page([((1200, 1100), 0, colors[2]), ((1280, 2500), 3, colors[3])])]
-    cards = pdf_card.pair_cards(pages)
+    cards = core_cards.pair_cards(pages)
     assert [card.where for card in cards] == ["page 1", "page 2"]
     for card, (front, back) in zip(cards, (colors[:2], colors[2:])):
         assert abs(side_color(card, 0) - front).max() < 12 and abs(side_color(card, 1) - back).max() < 12
@@ -632,9 +632,8 @@ def test_card_batch_pairs_rows_and_saves_a_pdf_per_kept_card(tmp_path):
         outputs = sorted((tmp_path / "scan_cards").iterdir())
         assert [path.name for path in outputs] == ["scan_card_01.pdf", "scan_card_02.pdf"]  # no staging folder left over
         for path, colors in zip(outputs, ((front1, back1), (front2, back2))):
-            pdf = pdfium.PdfDocument(path)
-            mids = [np.asarray(pdf[i].render(scale=150 / 72).to_pil().convert("RGB"))[160, 253].astype(int) for i in range(len(pdf))]
-            pdf.close()
+            with RenderSession(path) as pdf:
+                mids = [np.asarray(pdf.render(i, scale=150 / 72, purpose="test").convert("RGB"))[160, 253].astype(int) for i in range(pdf.info.page_count)]
             assert len(mids) == 2 and all(abs(mid - color).max() < 12 for mid, color in zip(mids, colors))
         assert any(line.startswith("✓ 2 cards → ") for line in log_lines(app))
 
@@ -649,20 +648,20 @@ def test_card_batch_pairs_rows_and_saves_a_pdf_per_kept_card(tmp_path):
     ("ID Number 784199012345671", "784-1990-1234567-1"),
 ])
 def test_card_name_from_ocr_text(text, name):
-    assert pdf_card.name_from_text(text) == name
+    assert ocr.name_from_text(text) == name
 
 
 def test_card_name_needs_two_agreeing_readings_and_falls_back_to_the_back(monkeypatch):
     """OCR drops digits on real scans (21/13695 read as 21/3695), so one reading or a contested one suggests nothing."""
     monkeypatch.undo()  # the real suggest_name, not the autouse stub
-    monkeypatch.setattr(pdf_card, "TESSERACT", __file__)  # "installed"
+    monkeypatch.setattr(ocr, "resolve_tesseract", lambda: __file__)
     front, back = Image.new("RGB", (100, 60)), Image.new("RGB", (100, 60), (1, 1, 1))
-    passes = len(pdf_card.READINGS)
+    passes = len(ocr.READINGS)
 
     def scripted(front_texts, back_texts):  # the sides tell themselves apart by their first pixel: 0 front, 1 back
         texts = {0: iter(front_texts), 1: iter(back_texts)}
-        monkeypatch.setattr(pdf_card, "read_text", lambda band, scale, ink: next(texts[band.getpixel((0, 0))[0]]))
-        return pdf_card.suggest_name([front, back])
+        monkeypatch.setattr(ocr, "read_text", lambda band, scale, ink, **kwargs: next(texts[band.getpixel((0, 0))[0]]))
+        return ocr.suggest_name([front, back])
 
     assert scripted(["16/16402", ""] + ["16/16402"] * (passes - 2), []) == ("16-16402", 0)
     assert scripted(["21/13695", "21/3695"] + [""] * (passes - 2), ["99/99999"] * passes) is None  # contested: back not tried
@@ -672,7 +671,7 @@ def test_card_name_needs_two_agreeing_readings_and_falls_back_to_the_back(monkey
 
 def test_one_pdf_of_cards_has_a_bookmark_per_card(tmp_path):
     sides = [Image.new("RGB", (1011, 638), color) for color in ((200, 0, 0), (0, 200, 0), (0, 0, 200), (200, 200, 0))]
-    pdf_card.save_cards(sides, tmp_path / "all.pdf", [[]] * 4, ["16-16402 Station", "scan_card_02"])
+    core_cards.save_cards(sides, tmp_path / "all.pdf", [[]] * 4, ["16-16402 Station", "scan_card_02"])
     reader = PdfReader(tmp_path / "all.pdf")
     assert [(item.title, reader.get_destination_page_number(item)) for item in reader.outline] == [("16-16402 Station", 0), ("scan_card_02", 2)]
     assert set(reader.metadata or {}) <= {"/Producer"}
@@ -682,7 +681,7 @@ def test_card_names_are_suggested_confirmed_and_used_for_the_files(tmp_path, mon
     Image.fromarray(card_page(GRID)).save(tmp_path / "scan.pdf", "PDF", resolution=300)
     (back1, front1, back2, front2, back3) = (color for _, _, color in GRID)
 
-    def suggest(sides):  # card 1: plate read on its front; card 3: on its back (its front wasn't found)
+    def suggest(sides, **kwargs):  # card 1: plate read on its front; card 3: on its back (its front wasn't found)
         colors = [np.asarray(side)[side.height // 2, side.width // 2].astype(int) for side in sides]
         if abs(colors[0] - front1).max() < 12:
             return "21-13695", 0
@@ -690,7 +689,7 @@ def test_card_names_are_suggested_confirmed_and_used_for_the_files(tmp_path, mon
             return "18-94778", 1
         return None
 
-    monkeypatch.setattr(pdf_card, "suggest_name", suggest)
+    monkeypatch.setattr(ocr, "suggest_name", suggest)
 
     async def name(app, pilot, value=None, picks=()):
         await pilot.press("n")
@@ -731,9 +730,8 @@ def test_card_names_are_suggested_confirmed_and_used_for_the_files(tmp_path, mon
         folder = tmp_path / "scan_cards"
         assert sorted(path.name for path in folder.iterdir()) == ["18-94778 Station.pdf", "21-13695 (2).pdf", "21-13695.pdf"]
         for file, front in (("21-13695.pdf", front1), ("21-13695 (2).pdf", front2)):
-            pdf = pdfium.PdfDocument(folder / file)
-            mid = np.asarray(pdf[0].render(scale=150 / 72).to_pil().convert("RGB"))[160, 253].astype(int)
-            pdf.close()
+            with RenderSession(folder / file) as pdf:
+                mid = np.asarray(pdf.render(0, scale=150 / 72, purpose="test").convert("RGB"))[160, 253].astype(int)
             assert abs(mid - front).max() < 12
 
     run(tmp_path, scenario)
@@ -750,9 +748,8 @@ def test_compress_plain_and_cut_to_content(tmp_path):
             await pilot.press("c")
             await pilot.press(*keys)
             await settle(app, pilot)
-            pdf = pdfium.PdfDocument(output)
-            sizes = [round(page.get_size()[0]) for page in pdf]
-            pdf.close()
+            with RenderSession(output) as pdf:
+                sizes = [round(width) for width, _ in pdf.info.page_sizes]
             # cut: each page shrinks to the card (1011 px at 300 dpi = 243 pt, plus padding); plain keeps A4
             assert len(sizes) == 2 and all(widths[0] <= w <= widths[1] for w in sizes), sizes
         assert app.recent[0] == output

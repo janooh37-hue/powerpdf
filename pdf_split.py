@@ -4,76 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import secrets
-import shutil
 import sys
-from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
-
-
-def find_pdfs(paths: list[str]) -> list[Path]:
-    pdfs: dict[Path, Path] = {}
-    for raw_path in paths or ["."]:
-        path = Path(raw_path).expanduser()
-        if path.is_dir():
-            candidates = (
-                child
-                for child in path.iterdir()
-                if child.is_file() and child.suffix.lower() == ".pdf"
-            )
-        elif path.is_file() and path.suffix.lower() == ".pdf":
-            candidates = [path]
-        else:
-            raise ValueError(f"Not a PDF file or directory: {path}")
-
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            pdfs[resolved] = resolved
-
-    return sorted(pdfs.values(), key=lambda item: str(item).lower())
+from powerpdf_core import files, split
 
 
-def staging_dir(parent: Path, prefix: str) -> Path:
-    """A new hidden folder in parent for outputs before they are swapped in.
-    Not tempfile.mkdtemp: on Windows (Python 3.12.4+) it sets an owner-only ACL that moved files keep, and from an
-    elevated shell the owner is Administrators, so Photos and Explorer can't open the results."""
-    while True:
-        folder = parent / f"{prefix}{secrets.token_hex(4)}"
-        try:
-            folder.mkdir()  # inherits parent's permissions, like any new file there
-            return folder
-        except FileExistsError:
-            continue
-
-
-def split_pdf(source: Path) -> tuple[int, Path]:
-    output_dir = source.parent / f"{source.stem}_pages"
-    staging = staging_dir(source.parent, f".{source.stem}_pages_")
-
-    try:
-        with source.open("rb") as source_file:
-            reader = PdfReader(source_file)
-            if reader.is_encrypted and not reader.decrypt(""):
-                raise ValueError("password-protected PDF")
-
-            page_count = len(reader.pages)
-            width = max(3, len(str(page_count)))
-            for page_number, page in enumerate(reader.pages, start=1):
-                writer = PdfWriter()
-                writer.add_page(page)
-                output_name = f"{source.stem}_page_{page_number:0{width}d}.pdf"
-                with (staging / output_name).open("wb") as output_file:
-                    writer.write(output_file)
-
-        output_dir.mkdir(exist_ok=True)
-        for old_page in output_dir.glob(f"{source.stem}_page_*.pdf"):
-            old_page.unlink()
-        for new_page in staging.iterdir():
-            new_page.replace(output_dir / new_page.name)
-        return page_count, output_dir
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
 
 
 def main() -> int:
@@ -95,7 +30,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        pdfs = find_pdfs(args.paths)
+        pdfs = files.find_pdfs(args.paths)
     except ValueError as error:
         parser.error(str(error))
 
@@ -106,7 +41,7 @@ def main() -> int:
     failures = 0
     for pdf in pdfs:
         try:
-            page_count, output_dir = split_pdf(pdf)
+            page_count, output_dir = split.split_pdf(pdf)
             print(f"{pdf.name}: {page_count} page(s) -> {output_dir}")
         except Exception as error:
             failures += 1

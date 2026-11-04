@@ -7,41 +7,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
+from powerpdf_core import files, merge
 
 
-def expand(paths: list[str], output: Path) -> list[Path]:
-    pdfs: list[Path] = []
-    for raw_path in paths or ["."]:
-        path = Path(raw_path).expanduser()
-        if path.is_dir():
-            pdfs += sorted(
-                (c for c in path.iterdir() if c.is_file() and c.suffix.lower() == ".pdf"),
-                key=lambda item: item.name.lower(),
-            )
-        elif path.is_file() and path.suffix.lower() == ".pdf":
-            pdfs.append(path)
-        else:
-            raise ValueError(f"Not a PDF file or directory: {path}")
-    # never merge the output into itself (e.g. re-running in the same folder)
-    return [p for p in pdfs if p.resolve() != output]
-
-
-def merge_pdfs(pdfs: list[Path], output: Path, log=print) -> int:
-    """Append pdfs in order and write them to output; returns the page count.
-
-    Raises ValueError on a password-protected PDF (nothing is written)."""
-    writer = PdfWriter()
-    for pdf in pdfs:
-        reader = PdfReader(pdf)
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise ValueError(f"{pdf}: password-protected PDF")
-        writer.append(reader)
-        log(f"+ {pdf} ({len(reader.pages)} pages)")
-
-    with output.open("wb") as output_file:
-        writer.write(output_file)
-    return len(writer.pages)
 
 
 def main() -> int:
@@ -67,7 +35,7 @@ def main() -> int:
 
     output = Path(args.output).expanduser().resolve()
     try:
-        pdfs = expand(args.paths, output)
+        pdfs = files.expand(args.paths, output)
     except ValueError as error:
         parser.error(str(error))
 
@@ -79,8 +47,8 @@ def main() -> int:
         return 1
 
     try:
-        pages = merge_pdfs(pdfs, output)
-    except ValueError as error:
+        pages = merge.merge_pdfs(pdfs, output, log=print)
+    except Exception as error:
         print(error, file=sys.stderr)
         return 1
     print(f"-> {output} ({pages} pages)")
