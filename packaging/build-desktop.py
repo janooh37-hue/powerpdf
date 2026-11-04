@@ -82,6 +82,7 @@ def macos_helpers() -> None:
     tess = source("tesseract")
     cmake_build("tesseract", tess, prefix, "-DBUILD_TRAINING_TOOLS=OFF", "-DBUILD_TESTS=OFF",
                 "-DDISABLE_ARCHIVE=ON", "-DDISABLE_CURL=ON", "-DOPENMP_BUILD=OFF",
+                "-DDISABLE_TIFF=ON", "-DGRAPHICS_DISABLED=ON", "-DENABLE_NATIVE=OFF",
                 "-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE",
                 f"-DLeptonica_DIR={prefix}/lib/cmake/leptonica")
     gs = source("ghostscript")
@@ -143,13 +144,18 @@ def linux_helpers() -> None:
     shutil.copy2(ROOT / "packaging/linux-runtime-lock.json", STAGE / "LINUX-PROVENANCE.json")
     # Package copyright files contain upstream source links; this exact source
     # archive endpoint also retains Ubuntu's security patches and build recipes.
-    pointers = [f"{p['package']} {p['version']}: https://launchpad.net/ubuntu/+source/{p['source'].split()[0]}" for p in lock]
+    pointers = []
+    for package in lock:
+        name, *version = package["source"].split()
+        exact_version = version[0].strip("()") if version else package["version"]
+        pointers.append(f"{package['package']} {package['version']}: https://launchpad.net/ubuntu/+source/{name}/{exact_version}")
     (STAGE / "LINUX-SOURCES.txt").write_text("\n".join(pointers) + "\n")
 
 
 def common_data() -> None:
     fetch(INPUTS["font"], STAGE / "smoke-font.ttf")
     fetch(INPUTS["font_license"], LICENSES / "Noto-OFL.txt")
+    fetch(INPUTS["tessdata_license"], LICENSES / "Tessdata-Apache-2.0.txt")
     for language, checksum in {
         "eng": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
         "ara": "e3206d3dc87fd50c24a0fb9f01838615911d25168f4e64415244b67d2bb3e729",
@@ -206,10 +212,11 @@ def linux_installers(payload: Path) -> None:
     shutil.copy2(ROOT / "packaging/powerpdf-packaging-smoke.desktop", appdir)
     shutil.copy2(ROOT / "packaging/powerpdf-packaging-smoke.svg", appdir)
     tool = fetch(INPUTS["appimagetool"], BUILD / "appimagetool.AppImage")
+    runtime = fetch(INPUTS["appimage_runtime"], BUILD / "appimage-runtime-x86_64")
     tool.chmod(0o755)
     env = os.environ.copy()
     env.update({"ARCH": "x86_64", "APPIMAGE_EXTRACT_AND_RUN": "1"})
-    run(tool, "--no-appstream", appdir, DIST / (STEM + ".AppImage"), env=env)
+    run(tool, "--no-appstream", "--runtime-file", runtime, appdir, DIST / (STEM + ".AppImage"), env=env)
     deb = BUILD / "deb"
     install = deb / "opt/powerpdf-packaging-smoke"
     shutil.copytree(appdir / "usr/lib/powerpdf-packaging-smoke", install, dirs_exist_ok=True)
