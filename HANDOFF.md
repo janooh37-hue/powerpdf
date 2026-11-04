@@ -60,10 +60,10 @@ Ghostscript integration case requiring `gswin64c`).
 No print job was submitted. Native desktop/bundle and Windows ACL qualification
 remain platform acceptance work; headless tests do not establish those results.
 
-Phase 2 was approved and delivered as the native shell below. Phase 3 (bulk
-operations/Qt printing), Phase 4 (cards) and Phase 5 (pages/compare) still require
-separate owner approval in that order. The TUI/CLI Windows print path is retained
-until the printing cutover; never send jobs to the SHARP.
+Phases 2 and 3 were approved for the native shell and bulk workflows below.
+Phase 4 (cards) and Phase 5 (pages/compare) still require separate owner approval.
+The TUI/CLI Windows print commands remain available independently of the GUI's
+Qt print adapter; never send test jobs to the SHARP.
 The parallel `gui-packaging` engineer owns runtime discovery, `packaging/` and
 `.github/workflows/`; new assets belong under `assets/` when introduced.
 
@@ -126,6 +126,16 @@ The PDF shown is an explicitly labelled synthetic local document, not owner data
 Regenerate with `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q
 test_gui.py::test_capture_arabic_main_and_rename_dialog`.
 
+Filename presentation follows the application's layout direction, not a filename's
+first strong Arabic character. Labels/window titles/log paragraphs use LRI or RLI
+plus PDI around presentation text; Qt still shapes the Arabic runs. `FilenameEdit`
+uses a native editor paragraph mark (LRM/RLM), never returned in `.text()` or used
+in filesystem operations, because `QLineEdit.setLayoutDirection` alone still
+auto-detects an Arabic paragraph. The stem is initially selected with the cursor
+at its end. The same editor serves the browser path field. Direction tests cover
+both LTR and RTL application layouts; raw logical filenames remain unchanged.
+Corrected main/rename captures retain the paths above.
+
 ### Packaging collection contract
 
 - Entry: `powerpdf_gui:main` (windowed). Include `powerpdf_gui` and modules
@@ -146,6 +156,74 @@ test_gui.py::test_capture_arabic_main_and_rename_dialog`.
   Textual/Rich/textual-image payload; retained TUI/CLI builds still need theirs.
 - Linux reveal can use host `dbus-send`; absence/unsupported FileManager1 uses the
   honest parent-folder-open path. No new Python DBus or QtDBus module is imported.
+
+## Bulk document workflows — Phase 3
+
+`Operations` exposes Merge (`m`), Split (`s`), Compress (`c`), Images (`i`) and
+Print (`p`, Ctrl/Cmd+P). Merge requires at least two queued PDFs; other operations
+use a snapshot of the queue or selected PDF. Changing the queue afterward cannot
+change an open operation's target set.
+
+Merge/split/compress/images share `OperationDialog`: review exact ordered inputs
+and destinations, select native Save/folder destinations, confirm all existing
+outputs and stale numbered pages, then execute core jobs off the GUI thread.
+Destination reservations are acquired before reviewed revisions are checked and
+held through execution, preventing another local job from silently replacing an
+unconfirmed revision. Source/self/hardlink and cross-input output collisions fail
+before writing. Encoding/commit/error/cancel outcomes and actual output bytes are
+reported per input; completed outputs survive cancellation of later work.
+
+Compression defaults to ebook, supports crop and printer/screen quality, and warns
+that screen can destroy card fine print. Image export supports JPEG/PNG, quick
+150/300 DPI presets and the full 50–600 DPI range. All operations preserve inputs.
+Progress/cancel use real core events and cooperative cancellation; native calls
+are not forcibly interrupted. Closing joins owned workers safely.
+Print review lists exact inputs, scaling and copies; the actual `QPrintDialog`
+must be explicitly accepted before submission. Its native paper/orientation,
+duplex and printer settings are retained. A dedicated worker exclusively owns
+the accepted `QPrinter`, paints one uncached 300-dpi PDFium raster at a time, and
+uses PDF points for fit/actual-size placement inside printable margins.
+Oversized pages beyond 40 million pixels are rejected explicitly, not silently
+normalized to A4. Combined review page ranges, copies and collation are applied
+once; native printers receive one job per source.
+
+Explicit PDF printing is an intentionally selected output, not an automatic
+fallback for missing printers. It combines selected documents into one PDF,
+confirms existing-output replacement and stages destination-locally until the
+entire job succeeds. Cancel/error preserves an existing destination. Printer
+progress counts pages handed to the print engine, not physically printed pages;
+already-spooled output cannot be recalled.
+
+Packaging delta: include `powerpdf_gui.text`, `powerpdf_gui.operations`,
+`powerpdf_gui.printing`, `PySide6.QtPrintSupport` and its target-native print
+support plugin/dependencies. The Phase 2 asset list is unchanged; no QtPdf,
+QtWebEngine or QtSvg renderer is introduced. Native print-driver/dialog
+qualification remains necessary on each target OS.
+
+Phase 3 acceptance on Linux:
+`QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**275 passed, 4 skipped in 94.88s**. The unchanged skips are three Windows ACL
+cases and the legacy `gswin64c` integration case. New compression/crop tests use
+the real local Ghostscript (`/usr/bin/gs`); print tests accept an explicit
+`QPrinter.PdfFormat` destination, then run real PDFium/QPainter/QPrinter code.
+Lossless image rendering avoids an extra JPEG pass through Qt's PDF engine.
+Physical point sizes, clipping/margins, 300-dpi raster dimensions, copies/ranges,
+cancel/error preservation, overwrite races and source revisions are exercised.
+No physical printer job was submitted; OS dialogs are adapter-mocked in tests.
+
+Reviewed operation captures under `/tmp/gui/`, with real progress events:
+- `merge-dialog.png`, `merge-progress.png`, `merge-result.png`
+- `split-dialog.png`, `split-progress.png`, `split-result.png`
+- `compress-dialog.png`, `compress-progress.png`, `compress-result.png`
+- `images-dialog.png`, `images-progress.png`, `images-result.png`
+- `print-dialog.png`, `print-progress.png`, `print-result.png`
+`phase3-overview.png` assembles these receipts. The print receipt capture waits
+for Qt's wrapped status label to finish layout; its focused screenshot test also
+passed after this assertion was added. Bulk results contain real output paths
+and bytes, not simulated operations. Printing evidence is explicit PDF output,
+not proof of native printer drivers, duplex hardware or paper delivery.
+
+
 
 ## Where the code lives (one copy)
 
