@@ -15,6 +15,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import tomllib
 
 NAMES = ("رخصة المركبة.pdf", "شهادة 2026.pdf", "Ahmed عقد.pdf")
 
@@ -184,7 +185,8 @@ def smoke(gui: Path, cli: Path, output: Path, payload: Path | None = None) -> No
             or not {"Noto Sans", "Noto Sans Arabic"}.issubset(runtime["fonts"])):
         raise RuntimeError(f"GUI evidence does not describe the real Arabic fixture workspace: {runtime}")
     version = run([cli, "--version"], output, env)
-    if "powerpdf 0.7.0" not in version:
+    expected_version = tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text())["project"]["version"]
+    if version.strip() != f"powerpdf {expected_version}":
         raise RuntimeError(f"Wrong frozen console version: {version}")
     resolved = json.loads(run([cli, "--runtime-info"], output, env))
     for name in ("ghostscript", "tesseract"):

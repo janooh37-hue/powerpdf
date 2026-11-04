@@ -88,6 +88,9 @@ desktop.spec into one shared native layout. macOS uses PyInstaller's standard
 Frameworks/Resources separation for both executables before ad-hoc signing.
 The frozen interpreter enables UTF-8 so Arabic paths and redirected CLI output
 do not depend on the Windows console code page.
+All powerpdf_gui and powerpdf_core submodules are collected, including cards,
+page editing and comparison; application test modules/fixtures are excluded.
+The project version in pyproject.toml drives installer identities and smoke gates.
 After packaging, CI runs:
   uv run --frozen python packaging/smoke/install-artifacts.py
 The installed real MainWindow is captured in
