@@ -71,6 +71,21 @@ def _stat_revision(stat: os.stat_result) -> tuple[int, int, int, int, int]:
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
+def _revision_difference(comparison: str, before: tuple, after: tuple) -> str:
+    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    differences = ", ".join(f"{name}={old}->{new}"
+                            for name, old, new in zip(fields, before, after) if old != new)
+    return f"{comparison}: {differences}"
+
+
+def _path_handle_revision(path: Path) -> tuple[int, int, int, int, int]:
+    # Windows path stat can use stale directory-entry metadata after a write.
+    # Compare handle metadata only, including when verifying that the path has
+    # not been replaced since the snapshot handle was read and closed.
+    with path.open("rb") as source:
+        return _stat_revision(os.fstat(source.fileno()))
+
+
 def preview_scale(width: float, height: float) -> float:
     """TUI preview resolution: at most 1.5x and 1600 pixels on the long side.
 
@@ -155,10 +170,17 @@ class RenderSession:
             with path.open("rb") as source:
                 revision = _stat_revision(os.fstat(source.fileno()))
                 data = source.read()
-                if _stat_revision(os.fstat(source.fileno())) != revision:
-                    raise SourceChangedError(f"Source changed while opening: {path}")
-            if _stat_revision(path.stat()) != revision:
-                raise SourceChangedError(f"Source changed while opening: {path}")
+                after_read = _stat_revision(os.fstat(source.fileno()))
+                if after_read != revision:
+                    difference = _revision_difference("handle before/after read", revision, after_read)
+                    raise SourceChangedError(f"Source changed while opening ({difference}): {path}")
+            try:
+                reopened = _path_handle_revision(path)
+            except OSError as error:
+                raise SourceChangedError(f"Source changed while opening (path handle reopen failed: {error}): {path}") from error
+            if reopened != revision:
+                difference = _revision_difference("snapshot handle/path reopen", revision, reopened)
+                raise SourceChangedError(f"Source changed while opening ({difference}): {path}")
         self._source_path = path.resolve() if path is not None else None
         self._source_bytes = data
         self._revision = _SourceRevision(path, revision, hashlib.sha256(data).digest())
@@ -206,24 +228,34 @@ class RenderSession:
         paths, check both file identity/stat and content, not only size/mtime.
         A renamed, missing or unreadable source is considered changed.
         """
+        return self._source_difference() is None
+
+    def _source_difference(self) -> str | None:
         path, revision = self._revision.path, self._revision.stat
         if path is None:
-            return True
+            return None
         try:
             with path.open("rb") as source:
-                if _stat_revision(os.fstat(source.fileno())) != revision:
-                    return False
+                opened = _stat_revision(os.fstat(source.fileno()))
+                if opened != revision:
+                    return _revision_difference("opened handle/snapshot", revision, opened)
                 digest = hashlib.file_digest(source, "sha256").digest()
-                if _stat_revision(os.fstat(source.fileno())) != revision:
-                    return False
-            return digest == self._revision.digest and _stat_revision(path.stat()) == revision
-        except OSError:
-            return False
+                after_read = _stat_revision(os.fstat(source.fileno()))
+                if after_read != revision:
+                    return _revision_difference("handle before/after hash", revision, after_read)
+            reopened = _path_handle_revision(path)
+            if reopened != revision:
+                return _revision_difference("hashed handle/path reopen", revision, reopened)
+            if digest != self._revision.digest:
+                return "snapshot/read content digest differs"
+        except OSError as error:
+            return f"source handle read/reopen failed: {error}"
+        return None
 
     def check_source_unchanged(self) -> None:
         """Raise SourceChangedError if an export would use a stale path revision."""
-        if not self.source_unchanged():
-            raise SourceChangedError(f"Source changed since opening: {self._revision.path}")
+        if difference := self._source_difference():
+            raise SourceChangedError(f"Source changed since opening ({difference}): {self._revision.path}")
 
     def render(
         self,

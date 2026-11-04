@@ -479,3 +479,124 @@ def test_empty_pdf_is_rejected_without_returning_a_live_session():
     # PDFium rejects page-less documents during open, before render is possible.
     with pytest.raises(render.RenderError):
         RenderSession(output.getvalue())
+
+
+def _changed_stat(stat, **changes):
+    from types import SimpleNamespace
+    fields = {name: getattr(stat, name) for name in dir(stat) if name.startswith("st_")}
+    return SimpleNamespace(**(fields | changes))
+
+
+def test_fresh_merge_exports_images_with_stale_path_metadata(source, monkeypatch):
+    from pathlib import Path
+    from PIL import Image
+    from powerpdf_core.merge import merge_pdfs
+    from powerpdf_core.images import to_images
+
+    fresh = source.with_name("مدمج.pdf")
+    assert merge_pdfs([source, source], fresh) == 4
+    original_stat = Path.stat
+    actual = original_stat(fresh)
+
+    def stale_stat(path, *args, **kwargs):
+        stat = original_stat(path, *args, **kwargs)
+        if path == fresh:
+            return _changed_stat(stat, st_size=0, st_mtime_ns=stat.st_mtime_ns - 1_000_000,
+                                 st_ctime_ns=stat.st_ctime_ns - 2_000_000)
+        return stat
+
+    monkeypatch.setattr(Path, "stat", stale_stat)
+    assert fresh.stat().st_size != actual.st_size
+    with RenderSession(fresh) as session:
+        assert session.info.page_count == 4
+        assert session.source_bytes == fresh.read_bytes()
+        session.check_source_unchanged()
+        outputs = to_images(fresh, "png", 100)
+        assert len(outputs) == 4
+        with Image.open(outputs[0]) as image:
+            assert image.format == "PNG"
+            assert image.getpixel((10, 10)) == (255, 0, 0)
+        fresh.write_bytes(fresh.read_bytes() + b"\n% external change")
+        assert not session.source_unchanged()
+
+
+def test_handle_revision_change_during_snapshot_read_is_rejected(source, monkeypatch):
+    original = os.fstat
+    calls = 0
+
+    def changed_after_read(fd):
+        nonlocal calls
+        calls += 1
+        stat = original(fd)
+        return _changed_stat(stat, st_mtime_ns=stat.st_mtime_ns + 1) if calls == 2 else stat
+
+    monkeypatch.setattr(os, "fstat", changed_after_read)
+    with pytest.raises(SourceChangedError, match="changed while opening") as caught:
+        RenderSession(source)
+    assert calls == 2
+    assert "handle before/after read" in str(caught.value)
+    assert "st_mtime_ns=" in str(caught.value) and "->" in str(caught.value)
+
+
+def test_path_replacement_after_snapshot_read_is_rejected(source, monkeypatch):
+    from pathlib import Path
+    replacement = source.with_name("replacement.pdf")
+    replacement.write_bytes(pdf_bytes(color="0 1 0"))
+    original = Path.open
+    calls = 0
+
+    def replace_before_reopen(path, *args, **kwargs):
+        nonlocal calls
+        if path == source:
+            calls += 1
+            if calls == 2:
+                replacement.replace(source)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", replace_before_reopen)
+    with pytest.raises(SourceChangedError, match="changed while opening") as caught:
+        RenderSession(source)
+    assert "snapshot handle/path reopen" in str(caught.value)
+    assert any(field + "=" in str(caught.value) for field in ("st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"))
+
+
+def test_path_replacement_after_hash_is_rejected(source, monkeypatch):
+    from pathlib import Path
+    replacement = source.with_name("replacement.pdf")
+    replacement.write_bytes(source.read_bytes())
+    original = Path.open
+    calls = 0
+    with RenderSession(source) as session:
+        def replace_before_reopen(path, *args, **kwargs):
+            nonlocal calls
+            if path == source:
+                calls += 1
+                if calls == 2:
+                    replacement.replace(source)
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", replace_before_reopen)
+        assert not session.source_unchanged()
+        assert calls == 2
+
+
+def test_handle_modification_during_hash_is_rejected(source, monkeypatch):
+    original = render.hashlib.file_digest
+    with RenderSession(source) as session:
+        def modify_after_hash(stream, algorithm):
+            digest = original(stream, algorithm)
+            with source.open("ab") as target:
+                target.write(b"\n% concurrent modification")
+            return digest
+
+        monkeypatch.setattr(render.hashlib, "file_digest", modify_after_hash)
+        assert not session.source_unchanged()
+
+
+def test_export_source_change_diagnostic_names_comparison_and_fields(source):
+    with RenderSession(source) as session:
+        source.write_bytes(source.read_bytes() + b"\n% external change")
+        with pytest.raises(SourceChangedError) as caught:
+            session.check_source_unchanged()
+        assert "opened handle/snapshot" in str(caught.value)
+        assert "st_size=" in str(caught.value)

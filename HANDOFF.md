@@ -367,6 +367,28 @@ the regenerated offscreen synthetic-fixture captures, including the clarified
 rotation totals and active fit percentage. No native bundle validation or
 physical printing was performed.
 
+### Windows fresh-output snapshot identity
+
+Packaging run `41771405685`, job `126382059287` exposed a portable merge→image
+failure on a freshly written Arabic-named PDF. Directory-entry `Path.stat()`
+metadata can lag handle metadata on Windows; comparing it with `os.fstat()`
+spuriously raised “Source changed while opening”.
+
+`RenderSession` now compares handle revisions exclusively: fstat before/after
+the snapshot read, then fstat from a briefly reopened path handle to detect path
+replacement. Later export validation retains before/after-hash handle checks,
+the snapshot content digest and another path-handle identity check. Handles
+close before PDFium opens the immutable bytes. No retry, sleep or suppressed
+source-change error is used. Diagnostic exceptions identify the comparison and
+each changed stat field as `field=before->after`; digest/read failures are named.
+Regression coverage simulates stale path size/mtime/ctime on a real fresh
+merge→PNG export, plus read/hash mutation and path replacement races.
+Acceptance: `uv run --frozen pytest -q test_core_render.py` → **49 passed**;
+`QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**362 passed, 4 skipped in 113.20s**. This is Linux simulation of the Windows
+metadata divergence, not a claim that the portable Windows bundle was rerun;
+packaging must re-merge `gui` and repeat its installed/portable workflows.
+
 ## Where the code lives (one copy)
 
 | Location | What it is |
