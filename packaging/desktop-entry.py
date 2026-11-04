@@ -11,9 +11,6 @@ import sys
 
 def main() -> int:
     arguments = sys.argv[1:]
-    if arguments[:1] == ["--cli"]:
-        from powerpdf_cli import main as cli_main
-        return cli_main() or 0
 
     from powerpdf_gui import main as gui_main
     if "--packaging-smoke-output" not in arguments:
