@@ -12,6 +12,11 @@ Bundled third-party components retain their own copyrights and licenses:
 - Tesseract and official traineddata: Apache-2.0; https://github.com/tesseract-ocr
 - pypdfium2: Apache-2.0 / BSD-3-Clause; PDFium and its dependencies have
   additional notices: https://pypdfium2.readthedocs.io/en/stable/readme.html#licensing
+- Noto Sans and Noto Sans Arabic: SIL Open Font License 1.1.
+  Copyright notices and full licenses: assets/fonts/NotoSans-OFL.txt and
+  assets/fonts/NotoSansArabic-OFL.txt. Exact source revision, download URLs,
+  SHA-256 hashes and unmodified font filenames: assets/fonts/SOURCES.json.
+  Source: https://github.com/google/fonts (Google and the Noto contributors).
 - Python, NumPy, OpenCV, Pillow, pypdf, platformdirs, Send2Trash, Textual,
   textual-image and their dependencies retain their upstream licenses.
 
