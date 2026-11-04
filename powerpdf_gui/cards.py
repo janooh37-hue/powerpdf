@@ -11,7 +11,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
@@ -220,6 +220,8 @@ class NameDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, label)
             self.history.addItem(item)
         self.history.itemClicked.connect(self.use_label)
+        self.history.itemActivated.connect(self.use_label)
+        self.history.installEventFilter(self)
         layout.addWidget(self.history)
         if self.reading:
             use = QPushButton("Use OCR number (still requires Confirm)")
@@ -232,6 +234,15 @@ class NameDialog(QDialog):
         layout.addWidget(buttons)
         self.editor.selectAll()
         self.editor.setFocus()
+
+    def eventFilter(self, watched, event):
+        if (watched is self.history and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            if item := self.history.currentItem():
+                self.use_label(item)
+            event.accept()
+            return True  # Label activation must not also trigger Confirm.
+        return super().eventFilter(watched, event)
 
     def use_label(self, item):
         value = self.editor.text().strip()

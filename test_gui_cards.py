@@ -26,7 +26,7 @@ def workspace(qtbot, tmp_path, monkeypatch, *, missing=False, real_ocr=False, na
     if not real_ocr:
         monkeypatch.setattr(ocr, "resolve_tesseract", lambda: None)
     dialog = CardsWindow([source], settings_path=tmp_path / "settings.json")
-    qtbot.addWidget(dialog)
+    qtbot.addWidget(dialog, before_close_func=lambda widget: widget.shutdown())
     dialog.show()
     qtbot.waitUntil(lambda: dialog.session is not None or not dialog._loading, timeout=30000)
     assert dialog.session is not None, dialog.status_label.text()
@@ -87,7 +87,7 @@ def test_real_detection_navigation_markers_swap_skip_undo(qtbot, tmp_path, monke
 def test_arabic_name_ime_history_and_two_open_workspaces(qtbot, tmp_path, monkeypatch):
     dialog = workspace(qtbot, tmp_path, monkeypatch)
     second = CardsWindow(dialog.targets, settings_path=tmp_path / "settings.json")
-    qtbot.addWidget(second)
+    qtbot.addWidget(second, before_close_func=lambda widget: widget.shutdown())
     second.show()
     qtbot.waitUntil(lambda: second.session is not None, timeout=30000)
     name = NameDialog(dialog.session, dialog)
@@ -117,8 +117,13 @@ def test_arabic_name_ime_history_and_two_open_workspaces(qtbot, tmp_path, monkey
     assert dialog.session.names[0] == "16-16402 Label13"
     history = NameDialog(dialog.session, labels=["رخصة المركبة"])
     qtbot.addWidget(history)
-    history.use_label(history.history.item(0))
+    history.show()
+    history.history.setCurrentRow(0)
+    history.history.setFocus()
+    qtbot.keyClick(history.history, Qt.Key.Key_Return)
     assert history.editor.text() == "16-16402 رخصة المركبة"
+    assert history.isVisible()  # Picking a label does not confirm a filename.
+    history.reject()
     teardown(second)
     teardown(dialog)
 
