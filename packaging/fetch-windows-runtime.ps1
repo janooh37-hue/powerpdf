@@ -1,4 +1,4 @@
-param([string] $Version, [switch] $RuntimeOnly, [string] $RuntimeDestination = 'build/desktop-vendor')
+param([string] $RuntimeDestination = 'build/desktop-vendor')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -16,19 +16,9 @@ function Expand-Installer([string] $File, [string] $Destination) {
     if ($LASTEXITCODE) { throw "Dependency extraction failed: $File" }
 }
 
-if (-not $RuntimeOnly) {
-if (-not $Version) { throw 'Version is required for release builds' }
-$printScript = (Resolve-Path 'pdf_print.ps1').Path
-uv run --frozen --with pyinstaller==6.17.0 pyinstaller powerpdf_cli.py --onedir --name powerpdf --console --noconfirm --clean `
-    --specpath build --workpath build --distpath dist --collect-submodules textual --collect-data textual `
-    --hidden-import powerpdf --hidden-import pdf_merge --hidden-import pdf_split --hidden-import pdf_card `
-    --hidden-import pdf_compress --hidden-import pdf_image --hidden-import pdf_runtime --copy-metadata powerpdf `
-    --add-data "${printScript};."
-if ($LASTEXITCODE) { throw 'PyInstaller failed' }
-}
 
 $root = (Get-Location).Path
-$bin = if ($RuntimeOnly) { Join-Path $root $RuntimeDestination } else { Join-Path $root 'dist/powerpdf' }
+$bin = Join-Path $root $RuntimeDestination
 $vendor = Join-Path $bin 'vendor'
 $licenses = Join-Path $bin 'licenses'
 New-Item -ItemType Directory -Force $vendor, $licenses, 'build/downloads' | Out-Null
@@ -74,19 +64,3 @@ Download 'https://github.com/junegunn/fzf/releases/download/v0.74.4/fzf-0.74.4-w
 Expand-Archive "$downloads/fzf.zip" "$vendor/fzf" -Force
 Download 'https://raw.githubusercontent.com/junegunn/fzf/v0.74.4/LICENSE' "$licenses/fzf-MIT.txt" ''
 Copy-Item 'packaging/THIRD-PARTY-NOTICES.txt' $bin
-if ($RuntimeOnly) { return }
-Copy-Item 'packaging/launch.ps1' $bin
-foreach ($command in @('split', 'merge', 'compress', 'image', 'print')) {
-    "@echo off`r`n`"%~dp0powerpdf.exe`" --cli $command %*`r`nexit /b %errorlevel%`r`n" |
-        Set-Content "$bin/pdf$command.cmd" -Encoding ascii
-}
-
-# Source URLs and exact package versions stay available even when installed offline.
-$compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
-if (-not (Test-Path $compiler)) {
-    choco install innosetup --yes --no-progress
-    if ($LASTEXITCODE) { throw 'Inno Setup installation failed' }
-}
-& $compiler "/DAppVersion=$Version" 'packaging/powerpdf.iss'
-if ($LASTEXITCODE) { throw 'Inno Setup failed' }
-Compress-Archive -Path $bin -DestinationPath "dist/powerpdf-$Version-windows-x64.zip" -Force

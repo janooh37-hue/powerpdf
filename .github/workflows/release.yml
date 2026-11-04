@@ -1,58 +1,153 @@
-name: Windows release
+name: Native desktop release
 
 on:
   push:
     tags: ['v*']
+    branches: [gui-packaging, gui]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: native-desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 45
+  native:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            label: windows-x64
+            arch: X64
+          - runner: macos-15
+            label: macos-arm64
+            arch: ARM64
+          - runner: macos-15-intel
+            label: macos-x64
+            arch: X64
+          - runner: ubuntu-22.04
+            label: linux-x64
+            arch: X64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
     defaults:
       run:
-        shell: pwsh
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.13'
+          python-version: '3.13.11'
           enable-cache: true
-      - name: Read release version
-        id: version
+      - name: Assert native architecture and tag version
         run: |
-          $version = uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and project version differ' }
-          "version=$version" >> $env:GITHUB_OUTPUT
-      - name: Install locked dependencies
+          test '${{ runner.arch }}' = '${{ matrix.arch }}'
+          uv run --no-project python -c 'import os, platform, tomllib; print(platform.platform(), platform.machine()); version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]; assert os.environ["GITHUB_REF_TYPE"] != "tag" or os.environ["GITHUB_REF_NAME"] == "v" + version, "Tag and project version differ"'
+      - name: Linux desktop prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config patchelf autoconf automake libtool libgl1 libegl1 libfontconfig1 libxcb-cursor0 libxkbcommon-x11-0 libdbus-1-3
+      - name: Install locked GUI dependencies
         run: uv sync --frozen
-      - name: Run tests
-        run: uv run --frozen pytest -q
-      - name: Build one-folder runtime and installer
-        run: ./packaging/build-windows.ps1 -Version '${{ steps.version.outputs.version }}'
-      - name: Smoke installed commands, bundled runtimes, upgrade and uninstall
-        run: ./packaging/smoke-install.ps1 -Version '${{ steps.version.outputs.version }}'
-      - name: Retain tested release assets
+      - name: Build native PowerPDF applications and installers
+        run: uv run --frozen --with pyinstaller==6.17.0 python packaging/build-desktop.py
+      - name: Runtime resolution tests
+        run: uv run --frozen python -m pytest -q test_runtime.py
+      - name: Smoke installed or mounted product artifacts
+        run: uv run --frozen python packaging/smoke/install-artifacts.py
+      - name: Retain tested installers and corresponding source
         uses: actions/upload-artifact@v4
         with:
-          name: powerpdf-${{ steps.version.outputs.version }}-windows-x64
+          name: release-assets-${{ matrix.label }}
           path: |
-            dist/powerpdf-${{ steps.version.outputs.version }}-windows-x64-setup.exe
-            dist/powerpdf-${{ steps.version.outputs.version }}-windows-x64.zip
+            dist/powerpdf-*-setup.exe
+            dist/powerpdf-*-windows-x64.zip
+            dist/powerpdf-*.dmg
+            dist/powerpdf-*.AppImage
+            dist/powerpdf-*.deb
             dist/ghostscript-10.08.0-source.tar.xz
+            dist/powerpdf-corresponding-source.tar.gz
           if-no-files-found: error
-      - name: Publish release only after smoke passes
-        if: startsWith(github.ref, 'refs/tags/v')
+          retention-days: 14
+      - name: Retain screenshots and runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-evidence-${{ matrix.label }}
+          path: |
+            build/evidence/
+            dist/native-linkage.txt
+            dist/artifact-sizes.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: Aggregate tested assets and publish tags
+    needs: native
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: dist
+          merge-multiple: true
+      - name: Validate release asset set and prepare notes and checksums
+        run: |
+          python - <<'PY'
+          import hashlib
+          import tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version']
+          prefix = f'powerpdf-{version}'
+          expected = {
+              f'{prefix}-windows-x64-setup.exe',
+              f'{prefix}-windows-x64.zip',
+              f'{prefix}-macos-arm64.dmg',
+              f'{prefix}-macos-x64.dmg',
+              f'{prefix}-linux-x64.AppImage',
+              f'{prefix}-linux-x64.deb',
+              'ghostscript-10.08.0-source.tar.xz',
+              'powerpdf-corresponding-source.tar.gz',
+          }
+          actual = {path.name for path in Path('dist').iterdir()}
+          if actual != expected:
+              raise SystemExit(f'Unexpected release asset set: missing={sorted(expected - actual)}, extra={sorted(actual - expected)}')
+          notes = Path('packaging/release-notes.txt').read_text(encoding='utf-8')
+          Path('dist/release-notes.txt').write_text(notes.replace('<version>', version), encoding='utf-8')
+          assets = sorted(path for path in Path('dist').iterdir() if path.is_file())
+          with Path('dist/SHA256SUMS').open('w', encoding='utf-8') as output:
+              for path in assets:
+                  digest = hashlib.sha256()
+                  with path.open('rb') as source:
+                      for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                          digest.update(chunk)
+                  output.write(f'{digest.hexdigest()}  {path.name}\n')
+          PY
+      - name: Retain complete release set for tags and dry runs
+        uses: actions/upload-artifact@v4
+        with:
+          name: powerpdf-release-bundle
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish tested assets exactly once
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          (Get-Content packaging/release-notes.txt -Raw).Replace('<version>', $env:VERSION) | Set-Content build/release-notes.txt
-          gh release create "v$env:VERSION" `
-            "dist/powerpdf-$env:VERSION-windows-x64-setup.exe" `
-            "dist/powerpdf-$env:VERSION-windows-x64.zip" `
-            'dist/ghostscript-10.08.0-source.tar.xz' `
-            --verify-tag --title "PowerPDF $env:VERSION" --notes-file build/release-notes.txt
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "PowerPDF ${RELEASE_TAG#v}" --notes-file dist/release-notes.txt

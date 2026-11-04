@@ -7,20 +7,6 @@
     "source": "base-files"
   },
   {
-    "package": "poppler-data",
-    "version": "0.4.11-1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/poppler-data/poppler-data_0.4.11-1_all.deb",
-    "sha256": "5b3b61fd048abc026f13a729f658d1c5fe00cdac95340faee590b37f1495af13",
-    "source": "poppler-data"
-  },
-  {
-    "package": "fonts-droid-fallback",
-    "version": "1:6.0.1r16-1.1build1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-android/fonts-droid-fallback_6.0.1r16-1.1build1_all.deb",
-    "sha256": "353e093dd32677e48edbdc9c94c4e92db0e80763fc326ddec1ba8281d8553a5e",
-    "source": "fonts-android"
-  },
-  {
     "package": "gcc-12-base",
     "version": "12.3.0-1ubuntu1~22.04.3",
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12/gcc-12-base_12.3.0-1ubuntu1~22.04.3_amd64.deb",
@@ -33,20 +19,6 @@
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/avahi/libavahi-common-data_0.8-5ubuntu5.5_amd64.deb",
     "sha256": "245062599ea288b3f2ee7403fdaf2b62c59ba6efec93a1560affe2a9ce4360fb",
     "source": "avahi"
-  },
-  {
-    "package": "fonts-urw-base35",
-    "version": "20200910-1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-urw-base35/fonts-urw-base35_20200910-1_all.deb",
-    "sha256": "e1a4bf7ca50ae8a80bc98aa9e1a618e9c08fdd03d2815a93a9ebc940b8798b48",
-    "source": "fonts-urw-base35"
-  },
-  {
-    "package": "ghostscript",
-    "version": "9.55.0~dfsg1-0ubuntu5.15",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/ghostscript/ghostscript_9.55.0~dfsg1-0ubuntu5.15_amd64.deb",
-    "sha256": "311b02bca55e3bba9255f4bbe55fe8544a298b9426aa8286db418ebca424c695",
-    "source": "ghostscript"
   },
   {
     "package": "libacl1",
@@ -245,20 +217,6 @@
     "source": "libgpg-error"
   },
   {
-    "package": "libgs9",
-    "version": "9.55.0~dfsg1-0ubuntu5.15",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/ghostscript/libgs9_9.55.0~dfsg1-0ubuntu5.15_amd64.deb",
-    "sha256": "6849902e0f3a7b95076caa6767c001b59a0aca06dd75be2aeca01f3ae889260f",
-    "source": "ghostscript"
-  },
-  {
-    "package": "libgs9-common",
-    "version": "9.55.0~dfsg1-0ubuntu5.15",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/ghostscript/libgs9-common_9.55.0~dfsg1-0ubuntu5.15_all.deb",
-    "sha256": "144b09f2701da62f7811623f7726339d8f0d2cce75b3e30f47f2be8ddfd7dc8a",
-    "source": "ghostscript"
-  },
-  {
     "package": "libgssapi-krb5-2",
     "version": "1.19.2-2ubuntu0.10",
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/krb5/libgssapi-krb5-2_1.19.2-2ubuntu0.10_amd64.deb",
@@ -350,13 +308,6 @@
     "source": "krb5"
   },
   {
-    "package": "liblept5",
-    "version": "1.82.0-3build1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/universe/l/leptonlib/liblept5_1.82.0-3build1_amd64.deb",
-    "sha256": "936cf3ce4f192bd33e1ac45921f5f530e7681cfc78d67048f0acd6c2d39f894d",
-    "source": "leptonlib"
-  },
-  {
     "package": "liblz4-1",
     "version": "1.9.3-2build2",
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/lz4/liblz4-1_1.9.3-2build2_amd64.deb",
@@ -432,13 +383,6 @@
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/libt/libtasn1-6/libtasn1-6_4.18.0-4ubuntu0.2_amd64.deb",
     "sha256": "a0903b4fae3ac2548a22d8822382e6d23586e42196d83ff67e82df36cd39fc6c",
     "source": "libtasn1-6"
-  },
-  {
-    "package": "libtesseract4",
-    "version": "4.1.1-2.1build1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/universe/t/tesseract/libtesseract4_4.1.1-2.1build1_amd64.deb",
-    "sha256": "1c428586aa9d0b5ef5a8a107f958d7eac99d734b6cb98338488c3aae9e8bd702",
-    "source": "tesseract"
   },
   {
     "package": "libtiff5",
@@ -579,13 +523,6 @@
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/libz/libzstd/libzstd1_1.4.8+dfsg-3build1_amd64.deb",
     "sha256": "ae7db00ce8b093e50c994518b90203544e063b4bc574836a048bb142b950b2c9",
     "source": "libzstd"
-  },
-  {
-    "package": "tesseract-ocr",
-    "version": "4.1.1-2.1build1",
-    "url": "https://archive.ubuntu.com/ubuntu/pool/universe/t/tesseract/tesseract-ocr_4.1.1-2.1build1_amd64.deb",
-    "sha256": "5d33a2cc1484aa5032d07f51a4375d414d6868347691239874f0cfc03280a18f",
-    "source": "tesseract"
   },
   {
     "package": "zlib1g",

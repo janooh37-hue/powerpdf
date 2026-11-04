@@ -1,38 +1,96 @@
-PowerPDF desktop packaging feasibility artifacts — CI HARNESS ONLY
+PowerPDF desktop installation
 
-These artifacts contain a packaging test window, NOT the PowerPDF application.
-They deliberately have a separate product name and installer identity. They
-never publish a GitHub release. The production GUI cutover is a separate step.
+These installers contain the real windowed PowerPDF GUI and a separate frozen
+powerpdf TUI/command-line executable. No Python, uv, Ghostscript or Tesseract
+installation is required. Keep each application bundle intact; copying out an
+executable alone loses its libraries, assets and helper runtimes.
 
-Windows x64: run the setup executable. This build is unsigned; Windows Defender
-SmartScreen may warn that the publisher is unknown. Verify the download's
-checksum and repository provenance before choosing More info / Run anyway.
-No administrator rights or separate Python, GS or Tesseract installs are needed.
+Verify the download against the release SHA256SUMS and repository provenance
+before bypassing any unsigned-publisher warning.
 
-macOS 13+: choose the DMG matching arm64 (Apple Silicon) or x64 (Intel), mount it,
-and drag the .app to Applications. These builds are ad-hoc signed, NOT Developer
-ID signed or notarized. For an independently verified download, first try
-Finder right-click / Open. If macOS blocks the quarantined unsigned app, remove
-quarantine from this app ONLY (do not disable Gatekeeper globally):
-  xattr -dr com.apple.quarantine /Applications/PowerPDF-Packaging-Smoke.app
-The source-build helpers are statically linked against their pinned libraries;
-otool -L is gated to Apple system libraries only. No Homebrew installation or
-Homebrew dylib paths are needed. The bundle is finally ad-hoc signed with
-codesign --force --deep -s - (including arm64 nested executables).
+Windows x64
+Download powerpdf-<version>-windows-x64-setup.exe and run it. The default install
+is per-user under %LOCALAPPDATA%\Programs\PowerPDF; all-users installation is
+optional. Launch PowerPDF from the Start Menu for the GUI. The installer adds
+its bin directory to PATH: open a NEW terminal, then use:
+  powerpdf
+  pdfsplit --help
+  pdfmerge --help
+  pdfcompress --help
+  pdfimage --help
+  pdfprint --help
+powerpdf opens the TUI; the other commands are command-line adapters. pdfprint
+is Windows-only and retains the bundled PowerShell/fzf printing workflow.
+Unsigned setup may trigger SmartScreen: for a verified download, choose More
+info / Run anyway. Uninstall through Windows Settings / Apps.
 
-Linux x64: Ubuntu 22.04 is the native build baseline. Mark the AppImage executable
-and launch it, or use --appimage-extract-and-run if FUSE is unavailable. The .deb
-installs in /opt/powerpdf-packaging-smoke with a desktop entry and PDF Open With
-registration, never silently changing PDF defaults. Remove with your package
-manager. A clean Ubuntu 24.04 container smoke verifies extracted AppImage launch.
+The powerpdf-<version>-windows-x64.zip portable edition contains the same
+runtime but does not change PATH or create shortcuts. Extract the entire archive,
+launch bin\powerpdf-gui.exe, and invoke commands from its bin directory or add
+that directory to your user PATH yourself.
+
+macOS 13+ (Apple Silicon or Intel)
+Choose powerpdf-<version>-macos-arm64.dmg for Apple Silicon or
+powerpdf-<version>-macos-x64.dmg for Intel. Mount it and drag PowerPDF.app to
+Applications. The app is ad-hoc signed, not Developer ID signed or notarized.
+For a verified download, try Finder right-click / Open. If quarantine still
+blocks it, remove quarantine from this application ONLY:
+  xattr -dr com.apple.quarantine /Applications/PowerPDF.app
+Do not disable Gatekeeper globally. Homebrew is not required.
+
+Double-click PowerPDF.app for the GUI. Terminal commands live in
+/Applications/PowerPDF.app/Contents/MacOS. For convenient user-local commands:
+  mkdir -p "$HOME/.local/bin"
+  for command in powerpdf pdfsplit pdfmerge pdfcompress pdfimage; do
+    ln -sf "/Applications/PowerPDF.app/Contents/MacOS/$command" "$HOME/.local/bin/$command"
+  done
+Add $HOME/.local/bin to your shell PATH, then run powerpdf for the TUI or, for
+example, pdfsplit --help. Keep the app installed at the symlink target. Remove
+the app and these symlinks to uninstall.
+
+Linux x64
+The native build baseline is Ubuntu 22.04. For the Debian package:
+  sudo apt install ./powerpdf-<version>-linux-x64.deb
+Launch PowerPDF from the desktop menu. The package installs under /opt/powerpdf
+and supplies /usr/bin/powerpdf, /usr/bin/pdfsplit, /usr/bin/pdfmerge,
+/usr/bin/pdfcompress and /usr/bin/pdfimage. Run powerpdf for the TUI or invoke
+an adapter with --help. Remove with sudo apt remove powerpdf. PDF Open With
+registration does not silently change your default PDF application.
+
+For the portable AppImage:
+  chmod +x powerpdf-<version>-linux-x64.AppImage
+  ./powerpdf-<version>-linux-x64.AppImage
+The default is the GUI. Use --cli for the console entry point:
+  ./powerpdf-<version>-linux-x64.AppImage --cli
+  ./powerpdf-<version>-linux-x64.AppImage --cli split --help
+The other subcommands are merge, compress and image. If FUSE is unavailable:
+  ./powerpdf-<version>-linux-x64.AppImage --appimage-extract
+  ./squashfs-root/AppRun
+  ./squashfs-root/AppRun --cli split --help
+Keep the extracted squashfs-root intact. AppImage installation needs no root;
+delete the AppImage or extracted directory to remove it.
+
+Bundled runtimes and licensing
+Ghostscript 10.08.0, Tesseract 5.5.0 and Leptonica 1.85.0 ship with the native
+helper closure, OCR models, fonts and license notices. Application LICENSE and
+NOTICE are included in the frozen runtime. PowerPDF is AGPL-3.0-or-later.
+Release assets include ghostscript-10.08.0-source.tar.xz and
+powerpdf-corresponding-source.tar.gz; see bundled third-party notices for the
+remaining licenses and source pointers.
+
 Desktop display servers, printer drivers/spoolers and GPU kernel drivers remain
-OS facilities; offscreen CI is not desktop/printer qualification.
+OS facilities. CI artifact smoke tests use an offscreen display and do not
+qualify physical printer output or every desktop environment.
 
-CI invocation (the probe intentionally requires an output folder):
-  PowerPDF-Packaging-Smoke --output /path/to/evidence
-CI sets QT_QPA_PLATFORM=offscreen. PNGs use bundled Noto Sans + Noto Sans Arabic;
-rendered PDF and helper/version/model evidence are written beside each PNG.
-
-All bundles include helper/model/font licenses and corresponding-source
-pointers. PowerPDF is AGPL-3.0-or-later. The application source archive and exact
-Ghostscript source accompany CI artifacts; see THIRD-PARTY-NOTICES.txt.
+Native CI diagnostics
+After packaging, CI runs:
+  uv run --frozen python packaging/smoke/install-artifacts.py
+The installed real MainWindow is captured in
+build/evidence/**/powerpdf-gui.png alongside runtime/linkage and CLI/OCR evidence.
+The stdlib-only external probe can also be invoked with:
+  python packaging/smoke/product-smoke.py --gui PATH --cli PATH --output DIR
+The launcher's private --packaging-smoke-output DIR diagnostic captures the real
+rendered application and exits after orderly worker shutdown; it is not a
+separate smoke application. All fixture construction and transformation checks
+remain outside the frozen product. The clean Ubuntu 24.04 AppImage gate runs
+without network access and never installs missing dependencies into the container.

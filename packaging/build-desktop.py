@@ -1,4 +1,4 @@
-"""Build CI-only Qt probes natively; never publish or impersonate the GUI app."""
+"""Build the complete PowerPDF desktop and terminal distribution natively."""
 from __future__ import annotations
 
 import hashlib
@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build/desktop"
@@ -22,10 +23,11 @@ VENDOR = STAGE / "vendor"
 LICENSES = STAGE / "licenses"
 INPUTS = json.loads((ROOT / "packaging/desktop-inputs.json").read_text())
 CONFIG = json.loads((ROOT / "packaging/desktop-config.json").read_text())
-NAME = CONFIG["harness"]["name"]
+NAME = "PowerPDF"
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
 OS = {"win32": "windows", "darwin": "macos", "linux": "linux"}[sys.platform]
-STEM = f"powerpdf-packaging-smoke-{OS}-{ARCH}"
+STEM = f"powerpdf-{VERSION}-{OS}-{ARCH}"
 
 
 def run(*args: object, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
@@ -63,9 +65,8 @@ def cmake_build(name: str, path: Path, prefix: Path, *options: str) -> None:
     run("cmake", "--install", target)
 
 
-def macos_helpers() -> None:
-    # Reproducible source builds, not Homebrew bottles: static helper closure and
-    # Apple system libraries only. No absolute Homebrew install names to rewrite.
+def unix_helpers() -> None:
+    # Pinned source-built helper closure, using only baseline OS libraries.
     prefix = BUILD / "native-prefix"
     zlib = source("zlib")
     run("./configure", "--static", f"--prefix={prefix}", cwd=zlib)
@@ -114,7 +115,8 @@ def macos_helpers() -> None:
         target = VENDOR / name / "bin" / binary.name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, target)
-        run("codesign", "--force", "-s", "-", target)
+        if sys.platform == "darwin":
+            run("codesign", "--force", "-s", "-", target)
     for part in ("lib", "Resource", "iccprofiles"):
         shutil.copytree(gs / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
     for name, src in (("Ghostscript", gs), ("Tesseract", tess), ("Leptonica", lept), ("libpng", png), ("libjpeg-turbo", jpeg), ("libtiff", tiff), ("zlib", zlib)):
@@ -128,21 +130,22 @@ def macos_helpers() -> None:
                 destination = LICENSES / name / license_file.relative_to(src)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(license_file, destination)
-    proof = []
-    for binary in (VENDOR / "ghostscript/bin/gs", VENDOR / "tesseract/bin/tesseract"):
-        output = subprocess.check_output(["otool", "-L", str(binary)], text=True)
-        proof.append(output)
-        print(output, flush=True)
-        for line in output.splitlines()[1:]:
-            dependency = line.strip().split(" ")[0]
-            if not dependency.startswith(("/usr/lib/", "/System/Library/")):
-                raise RuntimeError(f"Nonrelocatable helper dependency: {dependency}")
-    (DIST / "native-linkage.txt").write_text("\n".join(proof))
+    if sys.platform == "darwin":
+        proof = []
+        for binary in (VENDOR / "ghostscript/bin/gs", VENDOR / "tesseract/bin/tesseract"):
+            output = subprocess.check_output(["otool", "-L", str(binary)], text=True)
+            proof.append(output)
+            print(output, flush=True)
+            for line in output.splitlines()[1:]:
+                dependency = line.strip().split(" ")[0]
+                if not dependency.startswith(("/usr/lib/", "/System/Library/")):
+                    raise RuntimeError(f"Nonrelocatable helper dependency: {dependency}")
+        (DIST / "native-linkage.txt").write_text("\n".join(proof))
 
 
 def linux_helpers() -> None:
-    # Exact Ubuntu 22.04 debs and SHA256s are checked in, including the complete
-    # helper link closure. Extracting avoids all reliance on runner-installed gs.
+    # Exact Ubuntu 22.04 debs provide the desktop/printing shared-library closure.
+    # Ghostscript and Tesseract themselves come only from the pinned source build.
     lock = json.loads((ROOT / "packaging/linux-runtime-lock.json").read_text())
     extracted = BUILD / "ubuntu-runtime"
     for package in lock:
@@ -162,17 +165,6 @@ def linux_helpers() -> None:
         for library in directory.glob("*.so*"):
             if not excluded.match(library.name) and library.is_file():
                 shutil.copy2(library.resolve(), VENDOR / "lib" / library.name)
-    for name, binary in (("ghostscript", "gs"), ("tesseract", "tesseract")):
-        destination = VENDOR / name / "bin" / binary
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(extracted / "usr/bin" / binary, destination)
-    gs_share = next((extracted / "usr/share/ghostscript").glob("9.*"))
-    for part in ("lib", "Resource", "iccprofiles"):
-        if (gs_share / part).exists():
-            shutil.copytree(gs_share / part, VENDOR / "ghostscript" / part, dirs_exist_ok=True)
-    shutil.copytree(extracted / "usr/share/fonts/type1/urw-base35", VENDOR / "ghostscript/Resource/Font", dirs_exist_ok=True)
-    # Debian copyright files contain each package's licensing terms. Unrelated
-    # NEWS/changelog symlinks can be dangling even in Ubuntu's own package.
     for package in lock:
         copyright_file = extracted / "usr/share/doc" / package["package"] / "copyright"
         destination = LICENSES / "ubuntu" / package["package"]
@@ -180,20 +172,11 @@ def linux_helpers() -> None:
         shutil.copy2(copyright_file, destination / "copyright")
     shutil.copytree(extracted / "usr/share/common-licenses", LICENSES / "ubuntu/common-licenses", dirs_exist_ok=True)
     shutil.copy2(ROOT / "packaging/linux-runtime-lock.json", STAGE / "LINUX-PROVENANCE.json")
-    # Package copyright files contain upstream source links; this exact source
-    # archive endpoint also retains Ubuntu's security patches and build recipes.
-    pointers = []
-    for package in lock:
-        name, *version = package["source"].split()
-        exact_version = version[0].strip("()") if version else package["version"]
-        pointers.append(f"{package['package']} {package['version']}: https://launchpad.net/ubuntu/+source/{name}/{exact_version}")
-    (STAGE / "LINUX-SOURCES.txt").write_text("\n".join(pointers) + "\n")
 
 
 def common_data() -> None:
-    fetch(INPUTS["font"], STAGE / "smoke-font.ttf")
-    fetch(INPUTS["latin_font"], STAGE / "smoke-latin-font.ttf")
-    fetch(INPUTS["font_license"], LICENSES / "Noto-OFL.txt")
+    for name in ("LICENSE", "NOTICE"):
+        shutil.copy2(ROOT / name, STAGE / name)
     fetch(INPUTS["tessdata_license"], LICENSES / "Tessdata-Apache-2.0.txt")
     fetch(INPUTS["python_license"], LICENSES / "CPython-3.13.11.txt")
     for language, checksum in {
@@ -218,39 +201,79 @@ def common_data() -> None:
                     dest = LICENSES / "python" / distribution.metadata["Name"] / str(file)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dest)
-    run("git", "archive", "--format=tar.gz", "--prefix=powerpdf-source/", "-o", DIST / "powerpdf-corresponding-source.tar.gz", "HEAD")
+    run("git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "archive", "--format=tar.gz", "--prefix=powerpdf-source/", "-o", DIST / "powerpdf-corresponding-source.tar.gz", "HEAD")
 
 
 def freeze() -> Path:
-    args = [sys.executable, "-m", "PyInstaller", CONFIG["harness"]["entry"], "--onedir", "--name", NAME,
-            "--noconfirm", "--clean", "--paths", str(ROOT), "--distpath", str(DIST),
-            "--workpath", str(BUILD / "pyinstaller"), "--specpath", str(BUILD),
-            "--collect-data", "pypdfium2", "--collect-data", "pypdfium2_raw"]
-    for module in CONFIG["harness"]["hidden_imports"]:
-        args.extend(["--hidden-import", module])
-    for module in CONFIG["harness"]["collect_submodules"]:
-        args.extend(["--collect-submodules", module])
-    for module in CONFIG["excluded_modules"]:
-        args.extend(["--exclude-module", module])
-    # Add helpers after freezing: on macOS static helper binaries must not be
-    # rewritten/flattened by PyInstaller's Python-library dependency collector.
-    args.append("--windowed" if sys.platform == "darwin" else "--console")
-    run(*args)
-    payload = DIST / (NAME + ".app") / "Contents/Resources" if sys.platform == "darwin" else DIST / NAME / "_internal"
-    shutil.copytree(STAGE, payload, dirs_exist_ok=True)
+    for kind, name in (("terminal", "powerpdf"), ("application", NAME)):
+        config = CONFIG[kind]
+        if sys.platform == "win32" and kind == "application":
+            name = "powerpdf-gui"
+        destination = BUILD / "terminal-dist" if kind == "terminal" else DIST
+        args = [sys.executable, "-m", "PyInstaller", config["entry"], "--onedir", "--name", name,
+                "--noconfirm", "--clean", "--paths", str(ROOT), "--distpath", str(destination),
+                "--workpath", str(BUILD / kind), "--specpath", str(BUILD),
+                "--collect-data", "pypdfium2", "--collect-data", "pypdfium2_raw", "--copy-metadata", "powerpdf"]
+        for module in config["hidden_imports"]:
+            args.extend(["--hidden-import", module])
+        for module in config["collect_submodules"]:
+            args.extend(["--collect-submodules", module])
+        for asset in config["assets"]:
+            target = asset if (ROOT / asset).is_dir() else "."
+            args.extend(["--add-data", f"{ROOT / asset}{os.pathsep}{target}"])
+        for module in CONFIG["excluded_modules"] + (["textual", "textual_image"] if kind == "application" else []):
+            args.extend(["--exclude-module", module])
+        if kind == "terminal":
+            args.extend(["--collect-data", "textual", "--console"])
+        else:
+            args.append("--windowed" if sys.platform != "linux" else "--console")
+            if sys.platform in ("win32", "darwin"):
+                args.extend(["--icon", str(ROOT / "assets/powerpdf.png")])
+        run(*args)
+        internal = destination / name / "_internal"
+        if kind == "application" and sys.platform == "darwin":
+            internal = DIST / (NAME + ".app") / "Contents/Resources"
+        shutil.copytree(STAGE, internal, dirs_exist_ok=True)
+    if sys.platform == "win32":
+        (DIST / "powerpdf-gui").rename(DIST / NAME)
     if sys.platform == "darwin":
+        bin_dir = DIST / (NAME + ".app") / "Contents/MacOS"
+        shutil.copytree(BUILD / "terminal-dist/powerpdf", bin_dir, dirs_exist_ok=True)
+    else:
+        bin_dir = DIST / NAME
+        shutil.copytree(BUILD / "terminal-dist/powerpdf", bin_dir, dirs_exist_ok=True)
+    for command in ("split", "merge", "compress", "image") + (("print",) if sys.platform == "win32" else ()):
+        if sys.platform == "win32":
+            (bin_dir / f"pdf{command}.cmd").write_text(f'''@echo off
+"%~dp0powerpdf.exe" --cli {command} %*
+''')
+        else:
+            path = bin_dir / f"pdf{command}"
+            path.write_text(f'''#!/bin/sh
+exec "$(dirname "$0")/powerpdf" --cli {command} "$@"
+''')
+            path.chmod(0o755)
+    if sys.platform == "darwin":
+        import plistlib
+        plist_path = DIST / (NAME + ".app") / "Contents/Info.plist"
+        info = plistlib.loads(plist_path.read_bytes())
+        info["CFBundleIdentifier"] = "org.powerpdf.PowerPDF"
+        info["CFBundleDocumentTypes"] = [{"CFBundleTypeName": "PDF document", "CFBundleTypeRole": "Editor",
+                                        "LSHandlerRank": "Alternate", "LSItemContentTypes": ["com.adobe.pdf"]}]
+        plist_path.write_bytes(plistlib.dumps(info))
         run("codesign", "--force", "--deep", "-s", "-", DIST / (NAME + ".app"))
         run("codesign", "--verify", "--deep", "--strict", DIST / (NAME + ".app"))
+    payload = DIST / (NAME + ".app") / "Contents/Resources" if sys.platform == "darwin" else DIST / NAME / "_internal"
     return payload
 
 
 def linux_installers(payload: Path) -> None:
     appdir = BUILD / "AppDir"
-    shutil.copytree(DIST / NAME, appdir / "usr/lib/powerpdf-packaging-smoke", dirs_exist_ok=True)
-    (appdir / "AppRun").write_text('#!/bin/sh\nHERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexport LD_LIBRARY_PATH="$HERE/usr/lib/powerpdf-packaging-smoke/_internal/vendor/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$HERE/usr/lib/powerpdf-packaging-smoke/' + NAME + '" "$@"\n')
+    shutil.copytree(DIST / NAME, appdir / "usr/lib/powerpdf", dirs_exist_ok=True)
+    (appdir / "AppRun").write_text('#!/bin/sh\nHERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexport LD_LIBRARY_PATH="$HERE/usr/lib/powerpdf/_internal/vendor/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\ncase "${1:-}" in --cli|--version|--runtime-info) exec "$HERE/usr/lib/powerpdf/powerpdf" "$@";; esac\nexec "$HERE/usr/lib/powerpdf/PowerPDF" "$@"\n')
     (appdir / "AppRun").chmod(0o755)
-    shutil.copy2(ROOT / "packaging/powerpdf-packaging-smoke.desktop", appdir)
-    shutil.copy2(ROOT / "packaging/powerpdf-packaging-smoke.svg", appdir)
+    shutil.copy2(ROOT / "packaging/powerpdf.desktop", appdir)
+    shutil.copy2(ROOT / "assets/powerpdf.png", appdir)
     tool = fetch(INPUTS["appimagetool"], BUILD / "appimagetool.AppImage")
     runtime = fetch(INPUTS["appimage_runtime"], BUILD / "appimage-runtime-x86_64")
     tool.chmod(0o755)
@@ -258,18 +281,18 @@ def linux_installers(payload: Path) -> None:
     env.update({"ARCH": "x86_64", "APPIMAGE_EXTRACT_AND_RUN": "1"})
     run(tool, "--no-appstream", "--runtime-file", runtime, appdir, DIST / (STEM + ".AppImage"), env=env)
     deb = BUILD / "deb"
-    install = deb / "opt/powerpdf-packaging-smoke"
-    shutil.copytree(appdir / "usr/lib/powerpdf-packaging-smoke", install, dirs_exist_ok=True)
-    for src, dest in ((ROOT / "packaging/powerpdf-packaging-smoke.desktop", deb / "usr/share/applications/powerpdf-packaging-smoke.desktop"),
-                      (ROOT / "packaging/powerpdf-packaging-smoke.svg", deb / "usr/share/icons/hicolor/scalable/apps/powerpdf-packaging-smoke.svg")):
+    install = deb / "opt/powerpdf"
+    shutil.copytree(appdir / "usr/lib/powerpdf", install, dirs_exist_ok=True)
+    for src, dest in ((ROOT / "packaging/powerpdf.desktop", deb / "usr/share/applications/powerpdf.desktop"),
+                      (ROOT / "assets/powerpdf.png", deb / "usr/share/icons/hicolor/256x256/apps/powerpdf.png")):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
-    launcher = deb / "usr/bin/powerpdf-packaging-smoke"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text('#!/bin/sh\nexport LD_LIBRARY_PATH="/opt/powerpdf-packaging-smoke/_internal/vendor/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec /opt/powerpdf-packaging-smoke/' + NAME + ' "$@"\n')
-    launcher.chmod(0o755)
+    launchers = deb / "usr/bin"
+    launchers.mkdir(parents=True, exist_ok=True)
+    for command in ("PowerPDF", "powerpdf", "pdfsplit", "pdfmerge", "pdfcompress", "pdfimage"):
+        (launchers / command).symlink_to("/opt/powerpdf/" + command)
     (deb / "DEBIAN").mkdir(parents=True, exist_ok=True)
-    (deb / "DEBIAN/control").write_text("Package: powerpdf-packaging-smoke\nVersion: 0.7.0\nArchitecture: amd64\nMaintainer: PowerPDF <noreply@github.com>\nDepends: libc6 (>= 2.35)\nSection: graphics\nPriority: optional\nDescription: PowerPDF CI packaging probe (not the application)\n")
+    (deb / "DEBIAN/control").write_text(f"Package: powerpdf\nVersion: {VERSION}\nArchitecture: amd64\nMaintainer: PowerPDF <noreply@github.com>\nDepends: libc6 (>= 2.35)\nSection: graphics\nPriority: optional\nDescription: Offline PDF desktop and terminal toolkit\n")
     run("dpkg-deb", "--root-owner-group", "--build", deb, DIST / (STEM + ".deb"))
     # ldd proof uses only the packaged loader search paths, not runner paths.
     env = os.environ.copy()
@@ -288,18 +311,21 @@ def main() -> None:
     for path in (BUILD, DIST, VENDOR, LICENSES):
         path.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
-        run("pwsh", "-NoProfile", "-File", "packaging/build-windows.ps1", "-RuntimeOnly")
-    elif sys.platform == "darwin":
-        macos_helpers()
+        run("pwsh", "-NoProfile", "-File", "packaging/fetch-windows-runtime.ps1")
     else:
-        linux_helpers()
+        unix_helpers()
+        if sys.platform == "linux":
+            linux_helpers()
     common_data()
     payload = freeze()
     if sys.platform == "win32":
         compiler = Path(os.environ["ProgramFiles(x86)"]) / "Inno Setup 6/ISCC.exe"
         if not compiler.exists():
             run("choco", "install", "innosetup", "--yes", "--no-progress")
-        run(compiler, "packaging/desktop-smoke.iss")
+        run(compiler, f"/DAppVersion={VERSION}", "packaging/powerpdf.iss")
+        portable = BUILD / "portable"
+        shutil.copytree(DIST / NAME, portable / "bin", dirs_exist_ok=True)
+        shutil.make_archive(str(DIST / STEM), "zip", portable)
     elif sys.platform == "darwin":
         image_root = BUILD / "dmg"
         image_root.mkdir(exist_ok=True)

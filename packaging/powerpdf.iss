@@ -20,7 +20,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ChangesEnvironment=yes
-UninstallDisplayIcon={app}\bin\powerpdf.exe
+UninstallDisplayIcon={app}\bin\powerpdf-gui.exe
 CloseApplications=yes
 
 [Tasks]
@@ -30,8 +30,8 @@ Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "
 Source: "..\dist\powerpdf\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\PowerPDF"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\launch.ps1"""; WorkingDir: "{userdocs}"; IconFilename: "{app}\bin\powerpdf.exe"
-Name: "{autodesktop}\PowerPDF"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\bin\launch.ps1"""; WorkingDir: "{userdocs}"; IconFilename: "{app}\bin\powerpdf.exe"; Tasks: desktopicon
+Name: "{group}\PowerPDF"; Filename: "{app}\bin\powerpdf-gui.exe"; WorkingDir: "{userdocs}"
+Name: "{autodesktop}\PowerPDF"; Filename: "{app}\bin\powerpdf-gui.exe"; WorkingDir: "{userdocs}"; Tasks: desktopicon
 
 [Code]
 function EnvironmentRoot: Integer;

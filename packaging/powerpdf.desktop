@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PowerPDF
+Comment=Offline PDF tools
+Exec=PowerPDF %F
+Icon=powerpdf
+Terminal=false
+Categories=Office;Graphics;
+MimeType=application/pdf;

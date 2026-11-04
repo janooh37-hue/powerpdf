@@ -1,34 +1,53 @@
-A complete Windows x64 install, not just the TUI executable.
+PowerPDF <version> — native desktop GUI and command-line tools
 
-Download powerpdf-<version>-windows-x64-setup.exe and run it. No Python, uv,
-Ghostscript, Tesseract, fzf or PowerShell 7 installation is required. The default
-install is per-user under %LOCALAPPDATA%\Programs\PowerPDF (no administrator
-rights); all-users installation is optional. Open a new terminal after setup.
-Unsigned installers may trigger Windows SmartScreen; verify the release origin.
+These are complete native installations of the real PowerPDF GUI, with a
+separate frozen powerpdf TUI and pdfsplit, pdfmerge, pdfcompress and pdfimage
+command-line adapters. Windows additionally includes the legacy pdfprint
+PowerShell/fzf printing workflow. No Python, uv, Ghostscript or Tesseract
+installation is required. Keep application bundles intact.
 
-Includes powerpdf, pdfsplit, pdfmerge, pdfcompress, pdfimage and pdfprint on PATH;
-a Start Menu shortcut (Windows Terminal when available, normal console otherwise),
-an optional desktop shortcut, Add/Remove Programs uninstall, and in-place upgrades.
+Choose your download:
+- Windows x64: powerpdf-<version>-windows-x64-setup.exe, or the portable
+  powerpdf-<version>-windows-x64.zip.
+- Apple Silicon: powerpdf-<version>-macos-arm64.dmg.
+- Intel Mac: powerpdf-<version>-macos-x64.dmg.
+- Linux x64: powerpdf-<version>-linux-x64.AppImage or
+  powerpdf-<version>-linux-x64.deb (Ubuntu 22.04 baseline).
 
-Bundled external runtimes:
-- Ghostscript 10.08.0: compression and Windows printing; AGPL-3.0.
-- Tesseract 5.5.0 / Windows build 5.5.0.20241111: card-name OCR; Apache-2.0.
-- tessdata_fast 4.1.0: English, Arabic and orientation models; Apache-2.0.
-- fzf 0.74.4: interactive print/file/printer selection; MIT.
+Verify downloads using the accompanying aggregate SHA256SUMS before installing.
+Installers are unsigned / not notarized:
+- Windows: for a verified download, SmartScreen More info / Run anyway. Setup
+  installs per-user by default and adds bin to PATH. Open a new terminal to run
+  powerpdf (TUI), pdfsplit --help, pdfmerge --help, pdfcompress --help,
+  pdfimage --help or pdfprint --help. The Start Menu opens the GUI. The portable
+  zip does not change PATH: extract all files and invoke commands from bin.
+- macOS 13+: mount the matching DMG and drag PowerPDF.app to Applications.
+  The app is ad-hoc signed, not Developer ID signed or notarized. Try Finder
+  right-click / Open. If a verified copy remains blocked, remove only its
+  quarantine: xattr -dr com.apple.quarantine /Applications/PowerPDF.app.
+  Never disable Gatekeeper globally. Console executables are under
+  /Applications/PowerPDF.app/Contents/MacOS; symlink powerpdf, pdfsplit,
+  pdfmerge, pdfcompress and pdfimage from there into a directory on your PATH.
+- Linux: sudo apt install ./powerpdf-<version>-linux-x64.deb installs the GUI
+  and /usr/bin command links (powerpdf, pdfsplit, pdfmerge, pdfcompress,
+  pdfimage). Alternatively chmod +x the AppImage and run it for the GUI;
+  append --cli for the TUI or --cli split --help (also merge/compress/image).
+  Without FUSE, use --appimage-extract and run squashfs-root/AppRun, passing
+  the same --cli arguments for console commands. Keep the extracted tree intact.
 
-License texts and source links are installed in bin\licenses and
-bin\THIRD-PARTY-NOTICES.txt. The Ghostscript corresponding-source archive is
-provided as an additional release asset at no charge.
+Bundled native runtimes include Ghostscript 10.08.0 (AGPL-3.0), Tesseract 5.5.0
+(Apache-2.0), Leptonica 1.85.0 (BSD-style), OCR models and fonts. Windows also
+bundles PowerShell and fzf for pdfprint. License texts and third-party notices
+are included with the runtime. PowerPDF is AGPL-3.0-or-later.
 
-Also includes the many-cards-per-scan workflow, named cards and confirmed-only OCR
-name suggestions. Originals are never overwritten by PDF processing commands.
+Corresponding-source downloads are provided at no charge:
+- ghostscript-10.08.0-source.tar.xz
+- powerpdf-corresponding-source.tar.gz
+Consult bundled notices for remaining dependency licenses and source pointers.
 
-The portable zip contains the SAME complete one-folder runtime and command shims,
-but does not change PATH or create shortcuts. Extract the entire folder; do not
-copy powerpdf.exe out of it. One-folder packaging retains fast startup without
-one-file extraction on every launch.
-
-The release is published only after Windows CI tests and silent-install smoke
-checks pass: refreshed PATH, version, all CLIs, bundled Ghostscript/Tesseract/fzf,
-English+Arabic+OSD data, upgrade and uninstall PATH cleanup. Printing smoke checks
-help and a cancelled file picker only; no physical printer jobs are submitted.
+One release is published only after all four native CI lanes pass runtime tests
+and installed/mounted artifact smoke checks. Branch pushes and manually started
+runs retain CI artifacts without publishing a release. CI also retains GUI
+screenshots and runtime evidence. Offscreen smoke tests do not certify physical
+printer jobs or all desktop environments. See packaging/DESKTOP-INSTALL.txt in
+the corresponding source for full installation, CLI and removal instructions.
