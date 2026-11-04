@@ -557,42 +557,67 @@ JBIG2/OCRmyPDF (extra installs; scans are colour), pypdfium2 rendering for compr
 
 ## Releases
 
-Releases on `janooh37-hue/powerpdf` are built on **Windows GitHub Actions**, never cross-compiled on Linux.
-`.github/workflows/release.yml` runs on a `v*` tag or `workflow_dispatch` (manual rehearsals do not publish).
-The tag must match `pyproject.toml`. The workflow installs uv/Python 3.13, syncs `uv.lock`, runs
-`uv run --frozen pytest -q`, then `packaging/build-windows.ps1` builds a **one-folder** PyInstaller
-runtime and Inno Setup installer. One-file is deliberately not used: it took 10–14 s per launch.
-Textual data/submodules and every `pdf_*` module are collected explicitly.
+`.github/workflows/release.yml` is the single release path. It builds natively on
+Windows x64 (`windows-2022`), macOS arm64 (`macos-15`), macOS x64
+(`macos-15-intel`) and Linux x64 (`ubuntu-22.04`). A `v*` tag must match
+`pyproject.toml`; branch pushes and `workflow_dispatch` are dry runs and never
+publish. Only a tag push publishes, after all four native lanes and the aggregate
+asset-set/checksum gate pass.
 
-Download **`powerpdf-<version>-windows-x64-setup.exe`** for a complete installation:
-- Default: per-user `%LOCALAPPDATA%\Programs\PowerPDF`, no admin rights; optional all-users mode.
-- `bin` goes on the appropriate user/machine PATH; setup/uninstall broadcast `WM_SETTINGCHANGE`.
-- Commands in any new terminal: `powerpdf`, `pdfsplit`, `pdfmerge`, `pdfcompress`, `pdfimage`, `pdfprint`.
-  The CLIs are thin `.cmd` shims into the same frozen executable, without importing Textual for CLI work.
-- Start Menu shortcut launches in Windows Terminal if present, otherwise a normal console; desktop shortcut optional.
-- Add/Remove Programs uninstall removes the PATH entry. The fixed AppId upgrades an existing installation in place.
-- Includes **Ghostscript 10.08.0**, **Tesseract 5.5.0.20241111** plus `eng`, `ara`, `osd`
-  (`tessdata_fast` 4.1.0), and **fzf 0.74.4**. No extra runtime installations or PowerShell 7 are needed.
-  Downloads are version-pinned and SHA-256 checked. Ghostscript includes its DLL, lib, Resource and ICC profiles.
-- `bin\licenses` and `bin\THIRD-PARTY-NOTICES.txt` contain licenses/source links: Ghostscript AGPL-3.0,
-  Tesseract/models Apache-2.0, fzf MIT. The exact Ghostscript source archive is a separate release asset.
+`packaging/build-desktop.py` uses pinned Python/uv dependencies and the shared
+`packaging/desktop.spec`; module/asset profiles live in `desktop-config.json`.
+The one-folder runtime contains the real windowed `powerpdf_gui` application,
+the separate `powerpdf` TUI executable, and split/merge/compress/image adapters.
+All GUI/core submodules, assets, fonts, LICENSE and NOTICE are collected; tests,
+GUI fixtures and unused Qt modules are excluded. Frozen Python enables UTF-8.
 
-`pdf_runtime.resolve_tool` prefers bundled `vendor` directories under `sys._MEIPASS`, then beside the
-frozen exe, then PATH, then known install directories. It sets `TESSDATA_PREFIX` / `GS_LIB` for bundled
-tools. `pdf_print.ps1` applies the same order and also works on Windows PowerShell 5.1.
-Source development (`uv run`) still uses local tools when no bundle is present.
+Complete platform artifacts:
+- `powerpdf-<version>-windows-x64-setup.exe` and portable `.zip`: Inno Setup,
+  per-user installation by default, optional all-users mode, `bin` on PATH,
+  GUI Start Menu/desktop shortcuts, and uninstall PATH removal. The GUI executable
+  is `powerpdf-gui.exe`; `pdfprint` retains PowerShell 5.1 plus bundled fzf.
+- `powerpdf-<version>-macos-arm64.dmg` and `powerpdf-<version>-macos-x64.dmg`:
+  drag `PowerPDF.app` to Applications. The internal GUI executable is
+  `powerpdf-gui` to avoid colliding with console `powerpdf` on case-insensitive
+  filesystems. CLI aliases are symlinks to the signed console executable.
+- `powerpdf-<version>-linux-x64.AppImage` and `.deb`: GUI desktop registration
+  includes PDF MIME handling. The deb installs under `/opt/powerpdf` with
+  `/usr/bin` symlinks. AppImage defaults to GUI; `--cli split` (or merge,
+  compress, image) dispatches console commands. `--appimage-extract` supports
+  systems without FUSE. macOS CLI symlink and per-OS installation instructions
+  are in `packaging/DESKTOP-INSTALL.txt`.
 
-The workflow silently installs a lower-version rehearsal installer, upgrades it, then starts a fresh shell
-with registry-refreshed PATH and poisoned external-tool PATH commands. It checks `--version`, bundled tool
-resolution and versions, OCR languages, generated-PDF compress/image/split/merge output, `pdfprint -h`,
-and a cancelled bundled-fzf picker (**no physical print jobs**). Silent uninstall must remove the executable and PATH entry. Only then are
-assets uploaded and the tag's release published. Actions logs contain the `SMOKE` evidence lines.
+All bundles include Ghostscript 10.08.0, Tesseract 5.5.0 with Leptonica 1.85.0,
+and checksummed tessdata_fast 4.1.0 `eng`, `ara`, `osd` models. Windows extracts
+pinned/checksummed installers using 7-Zip; macOS and Linux build a pinned static
+helper closure from checksummed source. Linux bundles the Ubuntu 22.04 desktop
+shared-library closure. macOS helper `otool -L` rejects Homebrew/build-prefix
+dependencies; Linux `ldd` and clean-container gates reject unresolved libraries.
+`pdf_runtime` resolves bundled tools without modifying `os.environ`; helper-only
+`helper_env` and sanitized `host_env` isolate runtime paths from host tools.
 
-Second asset: **`powerpdf-<version>-windows-x64.zip`**, the same complete runtime for portable use;
-extract the whole folder (no PATH/shortcuts automatically). Third: `ghostscript-10.08.0-source.tar.xz`,
-corresponding source offered alongside its binary. Build scripts: `packaging/`; release notes are in
-`packaging/release-notes.txt`.
+Installed/mounted artifact smokes launch the real GUI offscreen against Arabic
+filenames, capture PNGs, exercise compress/images/split/merge and all three OCR
+models, verify native linkage, and uninstall where applicable. Windows also tests
+the portable ZIP and cancelled fzf printing (no physical print jobs). The AppImage
+runs in network-disabled clean `ubuntu:24.04` without installing dependencies.
+Evidence artifacts contain `build/evidence/**/powerpdf-gui.png`, command logs,
+runtime/linkage reports and native artifact sizes.
 
-To release: check `gh release list` / `git tag`, bump `pyproject.toml` and `powerpdf.py VERSION`, run
-`uv lock`, update this handoff, commit/push main, then push `v<version>`. Watch with `gh run watch`.
-Run a manual workflow rehearsal before tagging if changing packaging. Never publish an un-smoked build.
+Builds are unsigned: Windows may show SmartScreen. macOS apps are ad-hoc signed
+and verified after DMG mounting; use right-click/Open, or for a verified download
+`xattr -dr com.apple.quarantine /Applications/PowerPDF.app`. Never disable
+Gatekeeper globally. Physical printer/GPU drivers and desktop servers remain
+OS facilities; offscreen CI does not qualify physical printing.
+
+PowerPDF is AGPL-3.0-or-later. Bundles retain component licenses and source
+pointers. The release contains the six platform artifacts above,
+`ghostscript-10.08.0-source.tar.xz`, `powerpdf-corresponding-source.tar.gz`,
+`SHA256SUMS` and release notes. The `powerpdf-release-bundle` Actions artifact
+also retains this complete set for dry runs.
+
+To release: merge the final GUI/packaging state into main without rewriting
+history, ensure `pyproject.toml` and `uv.lock` agree, push main, then push the
+matching `v<version>` tag. Watch the native workflow through publication; verify
+release assets/checksums and inspect the tag run's real GUI screenshots.
+Never publish an un-smoked build. Release notes: `packaging/release-notes.txt`.
