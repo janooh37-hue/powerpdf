@@ -55,7 +55,8 @@ receive `helper_env(executable)`; host PowerShell/Explorer processes receive
 remove obsolete `pdf_card` collection references.
 
 Phase 1 acceptance exercised on Linux: `uv run --frozen pytest -q` →
-**151 passed, 4 skipped in 33.76s** (Windows-specific tests skipped).
+**151 passed, 4 skipped in 33.76s** (three Windows ACL cases and the existing
+Ghostscript integration case requiring `gswin64c`).
 No print job was submitted. Native desktop/bundle and Windows ACL qualification
 remain platform acceptance work; headless tests do not establish those results.
 
