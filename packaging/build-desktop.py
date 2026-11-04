@@ -124,9 +124,16 @@ def linux_helpers() -> None:
     for package in lock:
         archive = fetch(package, BUILD / "downloads" / (package["package"] + ".deb"))
         run("dpkg-deb", "-x", archive, extracted)
+    # Ubuntu resources include absolute /var/lib and /usr/share symlinks.
+    # Rebase them into the extracted root before dereferencing into the bundle.
+    for link in extracted.rglob("*"):
+        if link.is_symlink() and os.readlink(link).startswith("/"):
+            target = extracted / os.readlink(link).lstrip("/")
+            link.unlink()
+            link.symlink_to(os.path.relpath(target, link.parent))
     (VENDOR / "lib").mkdir(parents=True, exist_ok=True)
     # Keep the host's glibc/loader together, never mix an extracted libc with it.
-    excluded = re.compile(r"^(ld-linux|lib(c|m|pthread|dl|rt|resolv|util|nsl|anl|BrokenLocale)\.so)")
+    excluded = re.compile(r"^(ld-linux|libnss_|libthread_db|lib(c|m|pthread|dl|rt|resolv|util|nsl|anl|BrokenLocale)\.so)")
     for directory in (extracted / "lib/x86_64-linux-gnu", extracted / "usr/lib/x86_64-linux-gnu"):
         for library in directory.glob("*.so*"):
             if not excluded.match(library.name) and library.is_file():
@@ -156,6 +163,7 @@ def common_data() -> None:
     fetch(INPUTS["font"], STAGE / "smoke-font.ttf")
     fetch(INPUTS["font_license"], LICENSES / "Noto-OFL.txt")
     fetch(INPUTS["tessdata_license"], LICENSES / "Tessdata-Apache-2.0.txt")
+    fetch(INPUTS["python_license"], LICENSES / "CPython-3.13.11.txt")
     for language, checksum in {
         "eng": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
         "ara": "e3206d3dc87fd50c24a0fb9f01838615911d25168f4e64415244b67d2bb3e729",

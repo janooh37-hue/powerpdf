@@ -1,5 +1,33 @@
 [
   {
+    "package": "poppler-data",
+    "version": "0.4.11-1",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/poppler-data/poppler-data_0.4.11-1_all.deb",
+    "sha256": "5b3b61fd048abc026f13a729f658d1c5fe00cdac95340faee590b37f1495af13",
+    "source": "poppler-data"
+  },
+  {
+    "package": "fonts-droid-fallback",
+    "version": "1:6.0.1r16-1.1build1",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-android/fonts-droid-fallback_6.0.1r16-1.1build1_all.deb",
+    "sha256": "353e093dd32677e48edbdc9c94c4e92db0e80763fc326ddec1ba8281d8553a5e",
+    "source": "fonts-android"
+  },
+  {
+    "package": "gcc-12-base",
+    "version": "12.3.0-1ubuntu1~22.04.3",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12/gcc-12-base_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+    "sha256": "7f9253b7e0976f0526fc21346c73ee006e185a7b2f2f865048ea78a2af55bc8d",
+    "source": "gcc-12"
+  },
+  {
+    "package": "libavahi-common-data",
+    "version": "0.8-5ubuntu5.5",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/avahi/libavahi-common-data_0.8-5ubuntu5.5_amd64.deb",
+    "sha256": "245062599ea288b3f2ee7403fdaf2b62c59ba6efec93a1560affe2a9ce4360fb",
+    "source": "avahi"
+  },
+  {
     "package": "fonts-urw-base35",
     "version": "20200910-1",
     "url": "https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-urw-base35/fonts-urw-base35_20200910-1_all.deb",

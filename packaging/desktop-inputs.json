@@ -1,4 +1,8 @@
 {
+  "python_license": {
+    "url": "https://raw.githubusercontent.com/python/cpython/v3.13.11/LICENSE",
+    "sha256": "78b12c3a81360b357002334f0e70ea0e92eebf7a9b358805c03c48484945f3bb"
+  },
   "appimage_runtime": {
     "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
     "sha256": "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46"
