@@ -55,7 +55,11 @@ def test_runtime_resolution_order(platform, tool, tmp_path, monkeypatch):
     assert pdf_runtime.resolve_tool(tool) == str(known)
 
 
-def test_host_environment_restores_loader_paths(monkeypatch):
+def test_host_environment_restores_loader_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "_internal"), raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "powerpdf"))
+    monkeypatch.setenv("PATH", os.pathsep.join((str(tmp_path / "_internal/PySide6"), "/host/bin")))
     monkeypatch.setenv("LD_LIBRARY_PATH", "/frozen")
     monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/host")
     monkeypatch.setenv("DYLD_LIBRARY_PATH", "/frozen")
@@ -63,6 +67,7 @@ def test_host_environment_restores_loader_paths(monkeypatch):
     monkeypatch.setenv("TESSDATA_PREFIX", "/frozen/tessdata")
     env = pdf_runtime.host_env()
     assert env["LD_LIBRARY_PATH"] == "/host"
+    assert env["PATH"] == "/host/bin"
     assert "LD_LIBRARY_PATH_ORIG" not in env
     assert "DYLD_LIBRARY_PATH" not in env
     assert "TESSDATA_PREFIX" not in env
@@ -78,3 +83,9 @@ def test_macos_resources_layout(tmp_path, monkeypatch):
     tool.parent.mkdir(parents=True)
     tool.touch()
     assert pdf_runtime.resolve_tool("ghostscript") == str(tool)
+
+
+def test_source_host_environment_preserves_user_loader_paths(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/user/libs")
+    assert pdf_runtime.host_env()["LD_LIBRARY_PATH"] == "/user/libs"
