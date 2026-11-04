@@ -1,0 +1,27 @@
+PowerPDF
+Copyright (C) 2026 PowerPDF contributors
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+PowerPDF is free software: you may redistribute and modify it under the GNU
+Affero General Public License, version 3 or (at your option) any later version.
+It comes WITHOUT ANY WARRANTY; see LICENSE for the complete terms.
+
+Bundled third-party components retain their own copyrights and licenses:
+- Ghostscript: GNU AGPL v3; https://www.ghostscript.com/
+- PySide6 / the selected Qt libraries: LGPL v3; https://doc.qt.io/qtforpython-6/licenses.html
+- Tesseract and official traineddata: Apache-2.0; https://github.com/tesseract-ocr
+- pypdfium2: Apache-2.0 / BSD-3-Clause; PDFium and its dependencies have
+  additional notices: https://pypdfium2.readthedocs.io/en/stable/readme.html#licensing
+- Python, NumPy, OpenCV, Pillow, pypdf, platformdirs, Send2Trash, Textual,
+  textual-image and their dependencies retain their upstream licenses.
+
+Distributors must include the exact bundled dependency license/notice closure,
+corresponding source and build/install scripts required by the applicable
+licenses. Bundle-specific notices and helper source links are supplied by the
+packaging process. Shared Qt libraries must remain replaceable; no application
+terms restrict recipients' LGPL rights to modify/relink/debug those libraries.
+The application is distributed as unsigned bundles; signing is not a prerequisite
+for the source license, and OS security policy may restrict unsigned software.
+
+PDFs and images processed by PowerPDF remain the user's documents; using the
+application does not by itself license those documents under the AGPL.
