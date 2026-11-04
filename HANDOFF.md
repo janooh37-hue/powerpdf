@@ -1,14 +1,16 @@
 # PowerPDF — handoff
 
-Date: 2026-11-04. Owner: GSSG (Windows 11, PowerShell 7). Version **0.7.0**.
+Date: 2026-11-04. Owner: GSSG (Windows 11, PowerShell 7). Version **0.8.0** (first GUI release).
 
 ## Goal
 
-A personal PDF toolkit for Windows. The main job: take scanned licenses, ID cards and certificates and make
-**small, readable, card-only** copies for web-app uploads and sending to people. It should feel premium.
+An open-source, local desktop PDF workspace for Windows, macOS and Linux, with a
+retained TUI and CLIs. Native Qt filename inputs/display support Arabic without
+terminal bidi workarounds. Its core job remains **small, readable, card-only**
+copies of scanned licenses, IDs and certificates.
 
-`PLAN.md` (all four tiers + folder rename + single source of truth) is **done**; one git commit per item. Branch `main`, pushed to the
-private GitHub repo `janooh37-hue/powerpdf` (`origin`, account `janooh37-hue`, `gh` auth over https).
+The original terminal `PLAN.md` implementation is complete. Desktop product work
+is on branch `gui`; do not merge, tag or publish without owner authorization.
 The open backlog is at the bottom. **Don't build from it until the user picks by number.**
 
 ## Desktop product: shared-engine phase (`gui`)
@@ -341,11 +343,35 @@ while declined discard still prevents closing. Native file dialogs are
 adapter-mocked; no physical printer jobs or target-OS bundle qualification are
 claimed by this offscreen suite.
 
+## First GUI release preparation — 0.8.0
+
+Public setup, features, shortcuts, local privacy and third-party licensing now
+live in `README.md`; this file remains the internal engineering handoff.
+Committed `docs/screenshots/` PNGs are offscreen captures of synthetic fixtures,
+not owner documents. Packaging/runtime ownership and owner-only release approval
+remain unchanged; a version bump is not permission to tag or publish artifacts.
+
+The page-grid fixture's first page has native `/Rotate 90`. Adding another 90°
+correctly produces 180° pixels; labels now show additional and total rotation,
+with source/additional/total detail in tooltips/accessibility. Source rotations
+are read once, indexed by stable page ID, not reparsed for every thumbnail.
+Compare's percentage field now shows its active Fit page/Fit width/Custom mode
+and actual original-pane percentage; status retains both pane percentages when
+fit scales differ. Editing a percentage explicitly switches to custom mode.
+
+Release-side acceptance: `QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q`
+→ **356 passed, 4 skipped in 112.06s**. The existing four platform/tool skips are
+unchanged. Version consistency covers project/lock metadata, TUI/GUI constants,
+installed package metadata and About text. Public screenshots are copied from
+the regenerated offscreen synthetic-fixture captures, including the clarified
+rotation totals and active fit percentage. No native bundle validation or
+physical printing was performed.
+
 ## Where the code lives (one copy)
 
 | Location | What it is |
 |---|---|
-| `C:\Users\GSSG\projects\powerpdf\` | Owner's source checkout. Package `powerpdf` 0.7.0; shared `powerpdf_core`, TUI `powerpdf`, dispatcher `powerpdf_cli`, runtime `pdf_runtime`, CLI adapters `pdf_merge`, `pdf_split`, `pdf_compress`, `pdf_image`, plus `pdf_print.ps1`. uv `.venv`, `uv.lock`; `test_powerpdf.py`, `test_runtime.py`, and `test_core_*.py`. Installer builds run in target-native CI |
+| `C:\Users\GSSG\projects\powerpdf\` | Owner's source checkout. Package `powerpdf` 0.8.0; GUI `powerpdf_gui`, shared `powerpdf_core`, retained TUI/CLI adapters. uv `.venv`, `uv.lock`; tests include real-PDF core behavior and offscreen Qt workspaces. Installer builds run in target-native CI |
 | `C:\Users\GSSG\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` lines 17–21 | `pdfSplit`, `pdfMerge`, `pdfCompress`, `pdfImage` run `projects\powerpdf\.venv\Scripts\python.exe projects\powerpdf\pdf_<x>.py`; `pdfPrint` runs `projects\powerpdf\pdf_print.ps1` |
 | `C:\Users\GSSG\.local\bin\powerpdf.exe` | Global `powerpdf` command, an editable `uv tool` install (env in `%APPDATA%\uv\tools\powerpdf`), so code edits apply at once. `uv tool` **ignores `uv.lock`**, so install it constrained to the lock: `uv export --frozen --no-dev --no-emit-project --no-hashes -o $env:TEMP\c.txt; uv tool install --editable C:\Users\GSSG\projects\powerpdf --force --constraints $env:TEMP\c.txt`. Then tool and venv run the same libs (0.6.0: numpy 2.5.4, Pillow 13.0.0, pypdf 6.21.2, pypdfium2 5.14.0, opencv-headless 5.0.0.93, textual 8.2.8, textual-image 0.14.2). Rerun it when the repo moves, the lock changes, or a module is added to `py-modules` (the editable install only maps the modules listed when it was built) |
 
