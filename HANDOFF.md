@@ -279,6 +279,64 @@ sizes, metadata and named bookmarks; native file dialogs remain adapter-mocked.
 
 
 
+## Pages grid and compare — Phase 5
+
+`Operations → Pages grid` (`t`) acts on the highlighted PDF, never the queue.
+The grid is a virtualized `QListView`/model/delegate with visible/nearby thumbnail
+requests and a 32 MiB owned-image LRU, not a widget/raster per source page.
+Raster detail adapts to the visible/prefetched set at high desktop DPR so that
+neighbors cannot evict still-visible thumbnails from that budget.
+Stable original page IDs survive rotation, deletion, drag/keyboard reorder and
+undo/redo. Internal drag payloads are scoped to the edit session. Selection is
+used when present, otherwise the current page; rotation adds to native PDF
+rotation rather than replacing it.
+
+Extract defaults to `_extract.pdf`, Save to `_edited.pdf`; source bytes remain
+immutable and the original (including hardlink aliases) cannot be overwritten.
+Workers use `PageExportSnapshot`, so later GUI edits are excluded from an active
+save. Destination review/reservations, source-change checks, staged writes,
+progress/cancel, empty-save disabling and dirty-discard prompts follow the same
+rules as the other workspaces.
+
+`Operations → Compare original / compressed` (`d`) also uses the highlighted
+PDF. Both GUI and TUI use `powerpdf_core.files.compare_pair` to resolve either
+member of an existing original/`_small` pair. Missing pairs explain how to create
+the copy with Compress. Two independent `PreviewPane` workers display actual
+images with linked page/zoom/pan; page navigation stops at the shorter document.
+Sizes and signed percentage change distinguish smaller and larger outputs.
+This is a visual review, not a pixel-diff or content-equivalence assertion.
+
+Packaging adds `powerpdf_gui.pages` and `powerpdf_gui.compare`; the existing
+QtCore/QtGui/QtWidgets modules suffice. These workspaces still use only the
+shared PDFium lane, not QtPdf or QtWebEngine.
+
+Final Phases 4–5 acceptance on Linux:
+`QT_QPA_PLATFORM=offscreen uv run --frozen pytest -q` →
+**351 passed, 4 skipped in 111.08s**. Skips remain the three Windows ACL cases and
+legacy `gswin64c` integration case. A 128-page vector fixture exercises lazy
+visible rendering, bounded caches, intrinsic-plus-additional rotation, real
+extract/save outputs, undo/redo and revision/cancellation races. High-DPR tests
+retain the entire visible/prefetched raster set within the cache budget.
+Compare tests exercise both input roles, shorter-count bounds, differing page
+sizes/rotation, linked mouse/wheel pan and zoom, stale completions and close.
+
+Final regenerated captures were inspected:
+- `/tmp/gui/cards-workspace.png` — eight-card scan, box, confirmed Arabic name,
+  real unconfirmed OCR suggestions, skipped and guessed markers.
+- `/tmp/gui/cards-save-result.png` — actual combined PDF receipt.
+- `/tmp/gui/pages-grid.png` — 128-page virtual grid, three selected/rotated pages.
+- `/tmp/gui/compare-view.png` — real original/Ghostscript output,
+  **8,529 → 3,917 bytes (−54.1%)**.
+- `/tmp/gui/phases4-5-overview.png` — all four captures together.
+
+Keyboard activation of remembered card labels consumes Return: choosing a label
+does not also fire the dialog's Confirm button. Empty native filename editors
+have no phantom presentation-prefix offset. Accepted page-window closes use
+the normal QDialog lifecycle/finished signal; the main window releases them,
+while declined discard still prevents closing. Native file dialogs are
+adapter-mocked; no physical printer jobs or target-OS bundle qualification are
+claimed by this offscreen suite.
+
 ## Where the code lives (one copy)
 
 | Location | What it is |
