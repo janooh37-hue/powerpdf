@@ -30,7 +30,7 @@ OS facilities; offscreen CI is not desktop/printer qualification.
 
 CI invocation (the probe intentionally requires an output folder):
   PowerPDF-Packaging-Smoke --output /path/to/evidence
-CI sets QT_QPA_PLATFORM=offscreen. PNGs show the bundled Noto Arabic font;
+CI sets QT_QPA_PLATFORM=offscreen. PNGs use bundled Noto Sans + Noto Sans Arabic;
 rendered PDF and helper/version/model evidence are written beside each PNG.
 
 All bundles include helper/model/font licenses and corresponding-source

@@ -171,6 +171,7 @@ def linux_helpers() -> None:
 
 def common_data() -> None:
     fetch(INPUTS["font"], STAGE / "smoke-font.ttf")
+    fetch(INPUTS["latin_font"], STAGE / "smoke-latin-font.ttf")
     fetch(INPUTS["font_license"], LICENSES / "Noto-OFL.txt")
     fetch(INPUTS["tessdata_license"], LICENSES / "Tessdata-Apache-2.0.txt")
     fetch(INPUTS["python_license"], LICENSES / "CPython-3.13.11.txt")

@@ -11,7 +11,7 @@
     "script": "powerpdf-gui",
     "hidden_imports": ["pdf_runtime", "pdf_split", "pdf_merge", "pdf_compress", "pdf_image", "powerpdf_cli"],
     "collect_submodules": ["powerpdf_gui", "powerpdf_core"],
-    "assets": ["assets"]
+    "assets": ["assets", "LICENSE", "NOTICE"]
   },
   "excluded_modules": ["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick", "PySide6.Qt3DCore", "PySide6.Qt3DRender", "PySide6.Qt3DExtras", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.QtPdf", "PySide6.QtPdfWidgets", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtCharts", "PySide6.QtDataVisualization", "tkinter", "textual", "textual_image"]
 }

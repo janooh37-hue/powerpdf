@@ -30,7 +30,7 @@ All macOS source URLs and verified SHA256s are recorded in SOURCE-INPUTS.json.
 Tessdata_fast 4.1.0 eng + ara + osd: Apache-2.0.
 https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
 Models use the same checksums on every platform.
-Noto Sans Arabic: SIL Open Font License 1.1, licenses/Noto-OFL.txt.
+Noto Sans + Noto Sans Arabic: SIL Open Font License 1.1, licenses/Noto-OFL.txt.
 https://github.com/notofonts/noto-fonts/tree/v20201206-phase3
 
 PySide6 / Qt 6.8.3: LGPL-3.0 / GPL / commercial, selected Qt Widgets modules.

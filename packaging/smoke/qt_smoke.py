@@ -41,12 +41,17 @@ def main() -> int:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     app = QApplication(sys.argv[:1])
-    font_path = next(root / "smoke-font.ttf" for root in pdf_runtime.bundle_roots()
-                     if (root / "smoke-font.ttf").is_file())
-    font_id = QFontDatabase.addApplicationFont(str(font_path))
-    if font_id == -1:
-        raise RuntimeError("Bundled Arabic font did not load")
-    app.setFont(QFont(QFontDatabase.applicationFontFamilies(font_id)[0], 18))
+    families = []
+    for filename in ("smoke-latin-font.ttf", "smoke-font.ttf"):
+        font_path = next(root / filename for root in pdf_runtime.bundle_roots()
+                         if (root / filename).is_file())
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+        if font_id == -1:
+            raise RuntimeError(f"Bundled font did not load: {filename}")
+        families.extend(QFontDatabase.applicationFontFamilies(font_id))
+    font = QFont(families[0], 18)
+    font.setFamilies(families)
+    app.setFont(font)
     window = QWidget()
     window.setWindowTitle("PowerPDF — CI packaging harness (not the app)")
     window.setStyleSheet("QWidget { background: #f6f5f0; color: #171d27; } QLineEdit { background: white; padding: 10px; border: 1px solid #bac2cb; }")
@@ -96,7 +101,7 @@ def main() -> int:
         evidence = {tool: {"path": pdf_runtime.resolve_tool(tool), "version": run_helper(tool, "--version")}
                     for tool in ("ghostscript", "tesseract")}
         evidence["languages"] = languages
-        evidence["font"] = app.font().family()
+        evidence["fonts"] = app.font().families()
         (args.output / "runtime.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     layout.addWidget(QLabel("PASS · PDFium rendered · Ghostscript compressed · OCR engines loaded"))
     window.resize(900, 760)
